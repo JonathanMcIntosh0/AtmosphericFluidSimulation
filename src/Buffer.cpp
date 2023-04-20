@@ -56,6 +56,7 @@ void Buffer::draw(GLenum mode) {
 		glDrawElements(mode, numIdx, GL_UNSIGNED_INT, 0);
 	else
 		glDrawArrays(mode, 0, numVert);
+    unbind();
 }
 
 Buffer::~Buffer() {

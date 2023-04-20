@@ -3,9 +3,7 @@
 
 #include <vector>
 
-#define GLEW_STATIC
-
-#include <GL/glew.h>
+#include "GLHeaders.h"
 
 class Buffer
 {

@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include <iostream>
 #include <algorithm>
 #include <cstring>
@@ -5,6 +6,11 @@
 #include <utility>
 
 #include "GridSolver.h"
+
+#define TOP_TEMP (-1)
+#define BOT_TEMP 1
+#define EPSILON 0.0001f
+#define IX(i, j, l) (i * (longs + 2) * (lats + 2) + j * (layers + 2))
 
 using std::vector;
 using std::swap;
@@ -16,8 +22,10 @@ float nv = 1.0f, kappa = 0.1f; // diffuse rate. nv is for velocity field and kap
 float dt = 0.01f; // simulation step size
 float simTime;
 float dx = 1; // size of a cell in simulation
+//float dz = 1; // distance between vertical layers in simulation
 float velScale = 10.0f; // scaling for display
 float buoyancy = 0.5f; // buoyancy force coefficient
+float planetary_rotation = 0.7f;
 float refinementThreshold = 20.0f;
 int iterations = 20; // number of iterations for iterative solvers (Gauss–Seidel, Conjugate Gradients, etc.)
 
@@ -30,96 +38,197 @@ int iterations = 20; // number of iterations for iterative solvers (Gauss–Seid
  * Also note that the first rows/columns and last rows/columns are for the boundary.
  */
 // velocity
-double vx[2][rows + 2][cols + 2];
-double vy[2][rows + 2][cols + 2];
+double vx[2][longs + 2][lats + 2][layers + 2];
+double vy[2][longs + 2][lats + 2][layers + 2];
+double vz[2][longs + 2][lats + 2][layers + 2];
 
 // temperature
-double tp[2][rows + 2][cols + 2];
+//double tp[2][longs + 2][lats + 2][layers + 2];
+Array3D<double> tp [2] = { std::vector<double>(N_CELLS), std::vector<double>(N_CELLS) };
 
 // pointers for the corresponding quantities in the current and the next states
-double (*cur_vx)[cols + 2] = vx[0], (*next_vx)[cols + 2] = vx[1];
-double (*cur_vy)[cols + 2] = vy[0], (*next_vy)[cols + 2] = vy[1];
-double (*cur_tp)[cols + 2] = tp[0], (*next_tp)[cols + 2] = tp[1];
+double (*cur_vx)[lats + 2][layers + 2] = vx[0], (*next_vx)[lats + 2][layers + 2] = vx[1];
+double (*cur_vy)[lats + 2][layers + 2] = vy[0], (*next_vy)[lats + 2][layers + 2] = vy[1];
+double (*cur_vz)[lats + 2][layers + 2] = vz[0], (*next_vz)[lats + 2][layers + 2] = vz[1];
+//double (*cur_tp)[lats + 2][layers + 2] = tp[0], (*next_tp)[lats + 2][layers + 2] = tp[1];
+Array3D<double, longs+2, lats+2, layers+2> *cur_tp = tp[0].data(), *next_tp = tp[1].data();
 
 // flow source
-double vxSrc[rows + 2][cols + 2];
-double vySrc[rows + 2][cols + 2];
+//double vxSrc[rows + 2][cols + 2];
+//double vySrc[rows + 2][cols + 2];
 // heat source
-double tpSrc[rows + 2][cols + 2];
-double tpAvg[cols];
+double tpSrc[longs + 2][lats + 2][layers + 2];
+//double tpAvg[lats];
 
 //filament
-deque<shared_ptr<vector<Vertex>>> filaments;
-deque<double> ages;
-float maxAge = 10;
+//deque<shared_ptr<vector<Vertex>>> filaments;
+//deque<double> ages;
+//float maxAge = 10;
 
 /*
  * Flow type:
- *	horizontal: horizontal flow
+ *  zonal: along latitude lines (East-West)
+ *	meridional: along longitude lines (North-South)
  *	vertical: vertical flow
  *	other: quantities like temperature, density, etc.
  */
-enum FlowType { horizontal, vertical, temperature, other };
-void setBnd(double a[rows + 2][cols + 2], FlowType flowType);
+enum FlowType { zonal, meridional, vertical, temperature, other };
+void setBnd(double a[longs + 2][lats + 2][layers + 2], FlowType flowType);
 
-Vertex gridVertices[rows + 1][cols + 1];
-GLuint gridIndices[6 * rows * cols];
-Vertex velVertices[rows][cols][2];
+Vertex gridVertices[1][1][1];
+//Vertex gridVertices[longs + 1][lats + 1][layers + 1];
+std::vector<std::vector<GLuint>> gridIndices_long(longs + 1, std::vector<GLuint>(6 * lats * layers));
+std::vector<std::vector<GLuint>> gridIndices_lat(lats + 1, std::vector<GLuint>(6 * longs * layers));
+std::vector<std::vector<GLuint>> gridIndices_vert(layers + 1, std::vector<GLuint>(6 * longs * lats));
+
+Vertex velVertices[1][1][1][2];
+//Vertex velVertices[longs][lats][layers][2];
+std::vector<std::vector<GLuint>> velIndices_long(longs, std::vector<GLuint>(2 * lats * layers));
+std::vector<std::vector<GLuint>> velIndices_lat(lats, std::vector<GLuint>(2 * longs * layers));
+std::vector<std::vector<GLuint>> velIndices_vert(layers, std::vector<GLuint>(2 * longs * lats));
 
 void initGrid() {
-	memset(vx, 0, sizeof(vx));
-	memset(vy, 0, sizeof(vx));
-	memset(tp, 0, sizeof(vx));
-	memset(vxSrc, 0, sizeof(vxSrc));
-	memset(vySrc, 0, sizeof(vySrc));
-	memset(tpSrc, 0, sizeof(tpSrc));
-	memset(tpAvg, 0, sizeof(tpAvg));
-	filaments.clear();
-	ages.clear();
-	cur_vx = vx[0];
-	cur_vy = vy[0];
-	cur_tp = tp[0];
-	next_vx = vx[1];
-	next_vy = vy[1];
-	next_tp = tp[1];
+    memset(vx, 0, sizeof(vx));
+    memset(vy, 0, sizeof(vy));
+    memset(vz, 0, sizeof(vz));
+    memset(tp, 0, sizeof(tp));
+//	memset(vxSrc, 0, sizeof(vxSrc));
+//	memset(vySrc, 0, sizeof(vySrc));
+    memset(tpSrc, 0, sizeof(tpSrc));
+//    memset(tpAvg, 0, sizeof(tpAvg));
+//	filaments.clear();
+//	ages.clear();
+    cur_vx = vx[0];
+    cur_vy = vy[0];
+    cur_vz = vz[0];
+    cur_tp = tp[0].data();
+    next_vx = vx[1];
+    next_vy = vy[1];
+    next_vz = vz[1];
+    next_tp = tp[1].data();
 
     //Set tpAvg (linear function from -1 to 1)
-    tpAvg[0] = -1.0;
-    double incr_size = 2.0 / (cols - 1);
-    for (size_t j = 1; j < cols; ++j) {
-        tpAvg[j] = tpAvg[j - 1] + incr_size;
-    }
+//    tpAvg[0] = -1.0;
+//    double incr_size = 2.0 / (lats - 1);
+//    for (size_t j = 1; j < lats; ++j) {
+//        tpAvg[j] = tpAvg[j - 1] + incr_size;
+//    }
 
     //Set tpSrc
-    for (size_t i = 1; i <= rows; ++i) {
-        for (size_t j = 1; j <= cols; ++j) {
-            tpSrc[i][j] = .01 * tpAvg[j-1];
+//    tpSrc[longs/2][lats/2][1] = 50;
+    for (size_t j = 1; j <= lats; ++j) {
+        double ext_heat = -cos(2 * (j - .5) * M_PI / lats);
+        for (size_t l = 1; l <= layers; ++l) {
+            for (size_t i = 1; i <= longs; ++i) {
+                tpSrc[i][j][l] = .01 * ext_heat;
+            }
         }
     }
 
-	GLuint indices[rows + 1][cols + 1];
-	GLuint idx = 0;
-	for (size_t i = 0; i <= rows; ++i) {
-		for (size_t j = 0; j <= cols; ++j) {
-			gridVertices[i][j] = Vertex((float)j * cellSize, (float)i * cellSize, 0.f, 0.f, 0.f, 1.f);
-			indices[i][j] = idx++;
-		}
-	}
+    // Init temperature buffers
+    GLuint indices[longs + 1][lats + 1][layers + 1];
+    GLuint idx = 0;
+    for (size_t i = 0; i <= longs; ++i) {
+        for (size_t j = 0; j <= lats; ++j) {
+            for (size_t l = 0; l <= layers; ++l) {
+                // TODO possibly deal with flip of coords??
+                gridVertices[i][j][l] = Vertex((float) i * cellSize, (float) j * cellSize, (float) l * cellSize, 0.f,
+                                               0.f, 0.f, 1.f);
+                indices[i][j][l] = idx++;
+            }
+        }
+    }
 
-	size_t k = 0;
-	for (size_t i = 0; i < rows; ++i) {
-		for (size_t j = 0; j < cols; ++j) {
-			gridIndices[k++] = indices[i][j];
-			gridIndices[k++] = indices[i][j + 1];
-			gridIndices[k++] = indices[i + 1][j + 1];
-			gridIndices[k++] = indices[i][j];
-			gridIndices[k++] = indices[i + 1][j + 1];
-			gridIndices[k++] = indices[i + 1][j];
+    for (size_t i = 0; i <= longs; ++i) {
+        for (size_t j = 0; j <= lats; ++j) {
+            for (size_t l = 0; l <= layers; ++l) {
+                size_t tmp;
+                if (j != lats && l != layers) {
+                    tmp = 6 * (j * layers + l);
+                    gridIndices_long[i][tmp++] = indices[i][j][l];
+                    gridIndices_long[i][tmp++] = indices[i][j + 1][l];
+                    gridIndices_long[i][tmp++] = indices[i][j + 1][l + 1];
+                    gridIndices_long[i][tmp++] = indices[i][j][l];
+                    gridIndices_long[i][tmp++] = indices[i][j][l + 1];
+                    gridIndices_long[i][tmp++] = indices[i][j + 1][l + 1];
+                }
+                if (i != longs && l != layers) {
+                    tmp = 6 * (i * layers + l);
+                    gridIndices_lat[j][tmp++] = indices[i][j][l];
+                    gridIndices_lat[j][tmp++] = indices[i + 1][j][l];
+                    gridIndices_lat[j][tmp++] = indices[i + 1][j][l + 1];
+                    gridIndices_lat[j][tmp++] = indices[i][j][l];
+                    gridIndices_lat[j][tmp++] = indices[i][j][l + 1];
+                    gridIndices_lat[j][tmp++] = indices[i + 1][j][l + 1];
+                }
+                if (i != longs && j != lats) {
+                    tmp = 6 * (i * lats + j);
+                    gridIndices_vert[l][tmp++] = indices[i][j][l];
+                    gridIndices_vert[l][tmp++] = indices[i + 1][j][l];
+                    gridIndices_vert[l][tmp++] = indices[i + 1][j + 1][l];
+                    gridIndices_vert[l][tmp++] = indices[i][j][l];
+                    gridIndices_vert[l][tmp++] = indices[i][j + 1][l];
+                    gridIndices_vert[l][tmp++] = indices[i + 1][j + 1][l];
+                }
+            }
+        }
+    }
 
-			velVertices[i][j][0] = Vertex((float)(j + 0.5) * cellSize, (float)(i + 0.5) * cellSize, 0.f, 0.f, 1.f, 1.f);
-			velVertices[i][j][0] = Vertex((float)(j + 0.5) * cellSize, (float)(i + 0.5) * cellSize, 0.f, 0.f, 1.f, 1.f);
-		}
-	}
+    // Init velocity buffers
+//    GLuint indicesVel[longs][lats][layers][2];
+    idx = 0;
+    for (size_t i = 0; i < longs; ++i) {
+        for (size_t j = 0; j < lats; ++j) {
+            for (size_t l = 0; l < layers; ++l) {
+                velVertices[i][j][l][0] = Vertex(
+                        (float) (i + 0.5) * cellSize,
+                        (float) (j + 0.5) * cellSize,
+                        (float) (l + 0.5) * cellSize,
+                        0.f, 1.f, 0.f, 1.f);
+                velVertices[i][j][l][1] = Vertex(
+                        (float) (i + 0.5) * cellSize,
+                        (float) (j + 0.5) * cellSize,
+                        (float) (l + 0.5) * cellSize,
+                        0.5f, .5f, 0.5f, 1.f);
+
+                // (lats - 1) * layers + layers - 1 = lats * layers - 1
+                size_t tmp = 2 * (j * layers + l);
+                velIndices_long[i][tmp] = idx;
+                velIndices_long[i][tmp + 1] = idx + 1;
+
+                tmp = 2 * (i * layers + l);
+                velIndices_lat[j][tmp] = idx;
+                velIndices_lat[j][tmp + 1] = idx + 1;
+
+                tmp = 2 * (i * lats + j);
+                velIndices_vert[l][tmp] = idx;
+                velIndices_vert[l][tmp + 1] = idx + 1;
+
+                idx += 2;
+
+//                indicesVel[i][j][l][0] = idx++;
+//                indicesVel[i][j][l][1] = idx++;
+            }
+        }
+    }
+
+//    for (size_t i = 0; i < longs; ++i) {
+//        for (size_t j = 0; j < lats; ++j) {
+//            for (size_t l = 0; l < layers; ++l) {
+//                size_t tmp = 2 * j * l;
+//                velIndices_long[i][tmp] = indicesVel[i][j][l][0];
+//                velIndices_long[i][tmp + 1] = indicesVel[i][j][l][1];
+//
+//                tmp = 2 * i * l;
+//                velIndices_lat[j][tmp] = indicesVel[i][j][l][0];
+//                velIndices_lat[j][tmp + 1] = indicesVel[i][j][l][1];
+//
+//                tmp = 2 * i * j;
+//                velIndices_vert[l][tmp] = indicesVel[i][j][l][0];
+//                velIndices_vert[l][tmp + 1] = indicesVel[i][j][l][1];
+//            }
+//        }
+//    }
 
 	updateGrid();
 	simTime = 0;
@@ -153,36 +262,50 @@ double bilinearInterpolate(double x, double y, double v00, double v01, double v1
  *	a:
  *	    2D array whose boundary need to be set
  *	flowType:
- *	    type of flow: horizontal flow (the interpolated quantity will goes to zero at the vertical boundaries), vertical flow (the interpolated quantity will goes to zero at the horizontal boundaries), other (e.g., temperature, density, which are not really flow... only continuity need to be guaranteed.)
+ *	    type of flow: horizontal flow (the interpolated quantity will goes to zero at the vertical boundaries),
+ *	    vertical flow (the interpolated quantity will goes to zero at the horizontal boundaries),
+ *	    other (e.g., temperature, density, which are not really flow... only continuity need to be guaranteed.)
  */
-void setBnd(double a[rows + 2][cols + 2], FlowType flowType) {
+void setBnd(double a[longs + 2][lats + 2][layers + 2], FlowType flowType) {
 	// DONE: Set up the boundary according to the flow type.
-    for (int i = 1 ; i <= cols ; i++ ) {
-        // (a[1] + a[0])/2 = tpAvg => a[0] = 2*tpAvg - a[1]
-        a[0][i] =
-//                flowType == temperature ? a[0][i] = 2*tpAvg[i-1] - a[1][i] :
-                flowType == temperature ? a[0][i] = 2*(1) - a[1][i] :
-//                flowType == temperature ? a[0][i] = 2*(.2) - a[1][i] :
-                flowType == vertical ? -a[1][i] :
-                a[1][i];
 
-        // a[1] - tpAvg = (a[rows+1] + a[rows])/2 - a[rows]
-        // => a[rows+1] = 2(a[1] - tpAvg + a[rows]) - a[rows] = 2(a[1] - tpAvg) + a[rows]
-        a[rows + 1][i] =
-//                flowType == temperature ? 2*(a[1][i] - tpAvg[i - 1]) + a[rows][i] :
-                flowType == temperature ? 2*(-1) - a[rows][i] :
-//                flowType == temperature ? 2*(-.5) - a[rows][i] :
-                flowType == vertical ? -a[rows][i] :
-                a[rows][i];
+    // TOP and BOTTOM boundaries
+    for (int i = 1; i <= longs; ++i)
+        for (int j = 1; j <= lats; ++j)
+        {
+            a[i][j][0] = flowType == temperature ? 2*(BOT_TEMP) - a[i][j][1] :
+                         flowType == vertical ? -a[i][j][1] :
+                         a[i][j][1];
+            a[i][j][layers + 1] = flowType == temperature ? 2*(TOP_TEMP) - a[i][j][layers] :
+                                  flowType == vertical ? -a[i][j][layers] :
+                                  a[i][j][layers];
+        }
+    // NORTH and SOUTH boundaries
+    for (int i = 1; i <= longs; ++i) {
+        for (int l = 1; l <= layers; ++l)
+        {
+            a[i][0][l] = flowType == meridional ? -a[i][1][l] : a[i][1][l];
+            a[i][lats + 1][l] = flowType == meridional ? -a[i][lats][l] : a[i][lats][l];
+        }
     }
-    for (int i = 1 ; i <= rows ; i++ ) {
-        a[i][0] = flowType == horizontal ? -a[i][1] : a[i][1];
-        a[i][cols + 1] = flowType == horizontal ? -a[i][cols] : a[i][cols];
+
+    // NORTH and SOUTH corner zonal lines
+    for (int i = 1; i <= longs; ++i) {
+        a[i][0][0] = 0.5*(a[i][1][0] + a[i][0][1]);
+        a[i][0][layers + 1] = 0.5 * (a[i][1][layers + 1] + a[i][0][layers]);
+        a[i][lats + 1][0] = 0.5 * (a[i][lats][0] + a[i][lats + 1][1]);
+        a[i][lats + 1][layers + 1] = 0.5 * (a[i][lats][layers + 1] + a[i][lats + 1][layers]);
     }
-    a[0][0] = flowType == temperature ? a[0][1] : 0.5*(a[1][0] + a[0][1]);
-    a[0][cols + 1] = flowType == temperature ? a[0][cols] : 0.5*(a[1][cols + 1] + a[0][cols]);
-    a[rows + 1][0] = flowType == temperature ? a[rows + 1][1] : 0.5*(a[rows][0] + a[rows + 1][1]);
-    a[rows + 1][cols + 1] = flowType == temperature ? a[rows + 1][cols] : 0.5*(a[rows][cols + 1] + a[rows + 1][cols]);
+
+    // EAST and WEST boundaries TODO check that other boundaries with wrap-around part is fine
+    for (int j = 0; j <= lats + 1; ++j)
+        for (int l = 0; l <= layers + 1; ++l)
+        {
+//            a[0][i][j] = flowType == other ? a[1][i][j] : a[longs][i][j];
+//            a[longs + 1][i][j] = flowType == other ? a[longs][i][j] : a[1][i][j];
+            a[0][j][l] = a[longs][j][l];
+            a[longs + 1][j][l] = a[1][j][l];
+        }
 }
 
 /*
@@ -193,11 +316,13 @@ void setBnd(double a[rows + 2][cols + 2], FlowType flowType) {
  *	a:
  *	    target 2D array storing the quantity to modify
  */
-void addSource(double src[rows + 2][cols + 2], double a[rows + 2][cols + 2]) {
+void addSource(double src[longs + 2][lats + 2][layers + 2], double a[longs + 2][lats + 2][layers + 2]) {
 	// DONE: Add the source from array *src* to the target array *a*: e.g., a = a + dt * src
-    for (int i = 0; i < rows + 2; ++i) {
-        for (int j = 0; j < cols + 2; ++j) {
-            a[i][j] += dt * src[i][j];
+    for (int i = 0; i < longs + 2; ++i) {
+        for (int j = 0; j < lats + 2; ++j) {
+            for (int l = 0; l < layers + 2; ++l) {
+                a[i][j][l] += dt * src[i][j][l];
+            }
         }
     }
 }
@@ -214,7 +339,7 @@ void addSource(double src[rows + 2][cols + 2], double a[rows + 2][cols + 2]) {
  *	flowType:
  *	    flow type
  */
-void diffuse(double a0[rows + 2][cols + 2], double a1[rows + 2][cols + 2], double nv, FlowType flowType) {
+void diffuse(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][lats + 2][layers + 2], double nv, FlowType flowType) {
 	// DONE: diffusion
 	// Compute the diffusion part and update array *a1*.
 	// Use dt and dx for step size and cell size.
@@ -222,16 +347,35 @@ void diffuse(double a0[rows + 2][cols + 2], double a1[rows + 2][cols + 2], doubl
 	// Use a Gauss Seidel solve (or better, Conjugate Gradients).
 	// Use *iterations* as the number of iterations.
 	// Call setBnd to fix the boundary.
+    bool hasConverged;
+    double max_diff;
 
     double a = dt * nv / (dx * dx);
     for (int k = 0; k < iterations; k++) {
-        for (int i = 1; i <= rows; i++) {
-            for (int j = 1; j <= cols; j++) {
-                a1[i][j] = (a0[i][j] + a * (a1[i - 1][j] + a1[i + 1][j] + a1[i][j - 1] + a1[i][j + 1])) / (1 + 4*a);
+        hasConverged = true;
+        max_diff = 0;
+        for (int i = 1; i <= longs; i++) {
+            for (int j = 1; j <= lats; j++) {
+                for (int l = 1; l <= layers; l++) {
+                    double b = (a0[i][j][l] +
+                                a * (a1[i-1][j][l] + a1[i+1][j][l]
+                                     + a1[i][j-1][l] + a1[i][j+1][l]
+                                     + a1[i][j][l-1] + a1[i][j][l+1])) / (1 + 6*a);
+                    double diff = abs(b - a1[i][j][l]);
+                    if (diff > EPSILON) {
+                        hasConverged = false;
+                        max_diff = fmax(max_diff, diff);
+                    }
+
+                    a1[i][j][l] = b;
+                }
             }
         }
         setBnd(a1, flowType);
+        if (hasConverged) break;
     }
+    if (!hasConverged) std::cout << "DIFFUSE: NO CONVERGENCE: DIFF = " << max_diff << std::endl;
+
 
 }
 
@@ -247,7 +391,9 @@ void diffuse(double a0[rows + 2][cols + 2], double a1[rows + 2][cols + 2], doubl
  *	flowType:
  *	    flow type
  */
-void advect(double a0[rows + 2][cols + 2], double a1[rows + 2][cols + 2], double vx[rows + 2][cols + 2], double vy[rows + 2][cols + 2], FlowType flowType) {
+void advect(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][lats + 2][layers + 2],
+            double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][lats + 2][layers + 2], double vz[longs + 2][lats + 2][layers + 2],
+            FlowType flowType) {
 	// DONE: advection
 	// Compute the advection part and update array *a1*.
 	// Use dt and dx for step size and cell size.
@@ -256,27 +402,43 @@ void advect(double a0[rows + 2][cols + 2], double a1[rows + 2][cols + 2], double
 	// Call setBnd to fix the boundary.
 
     float dt0 = dt / dx;
-    for (int i = 1; i <= rows; i++) {
-        for (int j = 1; j <= cols; j++) {
-            double x = j - dt0 * vx[i][j];
-            if (x < 0.5) x = 0.5;
-            else if (x > cols + 0.5) x = cols + 0.5;
-            int j0 = (int) x;
-            int j1 = j0 + 1;
+    for (int i = 1; i <= longs; i++) {
+        for (int j = 1; j <= lats; j++) {
+            for (int l = 1; l <= layers; l++) {
+                double x = i - dt0 * vx[i][j][l];
+                double y = j - dt0 * vy[i][j][l];
+                double z = l - dt0 * vz[i][j][l];
 
-            double y = i - dt0 * vy[i][j];
-            if (y < 0.5) y = 0.5;
-            else if (y > rows + 0.5) y = rows + 0.5;
-            int i0 = (int) y;
-            int i1 = i0 + 1;
+                // Deal with wrap around for EAST-WEST (0 = longs)
+                if (x < 1) x += longs;
+                else if (x > longs) x -= longs;
+                int i0 = (int) x;
+                int i1 = i0 + 1;
 
-            a1[i][j] = bilinearInterpolate(x - j0, y - i0, a0[i0][j0], a0[i1][j0], a0[i0][j1], a0[i1][j1]);
+                if (y < 0.5) y = 0.5;
+                else if (y > lats + 0.5) y = lats + 0.5;
+                int j0 = (int) y;
+                int j1 = j0 + 1;
+
+                if (z < 0.5) z = 0.5;
+                else if (z > layers + 0.5) z = layers + 0.5;
+                int l0 = (int) z;
+                int l1 = l0 + 1;
+
+                z -= l0; // z is now between 0 and 1 (0 at l0, 1 at l1)
+                double v00 = (1 - z) * a0[i0][j0][l0] + z * a0[i0][j0][l1];
+                double v01 = (1 - z) * a0[i0][j1][l0] + z * a0[i0][j1][l1];
+                double v10 = (1 - z) * a0[i1][j0][l0] + z * a0[i1][j0][l1];
+                double v11 = (1 - z) * a0[i1][j1][l0] + z * a0[i1][j1][l1];
+
+                a1[i][j][l] = bilinearInterpolate(x - i0, y - j0, v00, v01, v10, v11);
+            }
         }
     }
     setBnd(a1, flowType);
 }
 
-double s_p[rows + 2][cols + 2], s_div[rows + 2][cols + 2];
+double s_p[longs + 2][lats + 2][layers + 2], s_div[longs][lats][layers];
 
 /*
  * Projection for the mass conservation.
@@ -284,36 +446,57 @@ double s_p[rows + 2][cols + 2], s_div[rows + 2][cols + 2];
  *	vx, vy:
  *	    the velocity field to be fixed
  */
-void project(double vx[rows + 2][cols + 2], double vy[rows + 2][cols + 2]) {
+void project(double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][lats + 2][layers + 2], double vz[longs + 2][lats + 2][layers + 2]) {
 	// DONE: projection
 	// Do a Poisson Solve to get a divergence free velocity field.
 	// Use a Gauss Seidel solve (or better, Conjugate Gradients).
 	// Use *iterations* as the number of iterations.
 	// Call setBnd to fix the boundary.
-    for (int i = 1; i <= rows; i++) {
-        for (int j = 1; j <= cols; j++) {
-            s_div[i][j] = -0.5*(vy[i+1][j] - vy[i-1][j] + vx[i][j+1] - vx[i][j-1])/dx;
-            s_p[i][j] = 0;
+    for (int i = 1; i <= longs; i++)
+        for (int j = 1; j <= lats; j++) {
+            for (int l = 1; l <= layers; l++) {
+                s_div[i-1][j-1][l-1] = -0.5*dx*(vx[i+1][j][l] - vx[i-1][j][l] + vy[i][j+1][l] - vy[i][j-1][l] + vz[i][j][l+1] - vz[i][j][l-1]);
+                s_p[i][j][l] = 0;
+            }
         }
-    }
-    setBnd(s_div, other); setBnd(s_p, other);
+//    setBnd(s_div, other);
+    setBnd(s_p, other);
 
+
+    bool hasConverged;
+    double max_diff;
     for (int k = 0; k < iterations; k++) {
-        for (int i = 1; i <= rows; i++) {
-            for (int j = 1; j <= cols; j++) {
-                s_p[i][j] = (s_div[i][j] + s_p[i - 1][j] + s_p[i + 1][j] + s_p[i][j - 1] + s_p[i][j + 1])/4;
+        hasConverged = true;
+        max_diff = 0;
+        for (int i = 1; i <= longs; i++) {
+            for (int j = 1; j <= lats; j++) {
+                for (int l = 1; l <= layers; l++) {
+                    double p = (s_div[i-1][j-1][l-1] + s_p[i-1][j][l] + s_p[i+1][j][l] + s_p[i][j-1][l] + s_p[i][j+1][l]
+                            + s_p[i][j][l-1] + s_p[i][j][l+1])/6;
+                    double diff = abs(p - s_p[i][j][l]);
+                    if (diff > EPSILON) {
+                        hasConverged = false;
+                        max_diff = fmax(max_diff, diff);
+                    }
+                    s_p[i][j][l] = p;
+                }
             }
         }
         setBnd(s_p, other);
+        if (hasConverged) break;
     }
+    if (!hasConverged) std::cout << "PROJECT: NO CONVERGENCE: DIFF = " << max_diff << std::endl;
 
-    for (int i = 1; i <= rows; i++) {
-        for (int j = 1; j <= cols; j++) {
-            vy[i][j] -= 0.5*dx*(s_p[i + 1][j] - s_p[i - 1][j]);
-            vx[i][j] -= 0.5*dx*(s_p[i][j + 1] - s_p[i][j - 1]);
+    for (int i = 1; i <= longs; i++) {
+        for (int j = 1; j <= lats; j++) {
+            for (int l = 1; l <= layers; l++) {
+                vx[i][j][l] -= 0.5*(s_p[i + 1][j][l] - s_p[i - 1][j][l])/dx;
+                vy[i][j][l] -= 0.5*(s_p[i][j + 1][l] - s_p[i][j - 1][l])/dx;
+                vz[i][j][l] -= 0.5*(s_p[i][j][l + 1] - s_p[i][j][l - 1])/dx;
+            }
         }
     }
-    setBnd(vx, horizontal); setBnd(vy, vertical);
+    setBnd(vx, zonal); setBnd(vy, meridional); setBnd(vz, vertical);
 }
 
 /*
@@ -322,16 +505,18 @@ void project(double vx[rows + 2][cols + 2], double vy[rows + 2][cols + 2]) {
  *	tp:
  *	    2D array storing the temperatures
  */
-double getReferenceTemperature(double tp[rows + 2][cols + 2]) {
+double getReferenceTemperature(double tp[longs + 2][lats + 2][layers + 2]) {
 	// DONE: Sum up array *tp* and compute the average.
     // Note: assuming we don't include the boundaries in the average...
     double sum = 0;
-    for (int i = 1; i <= rows; i++) {
-        for (int j = 1; j <= cols; j++) {
-            sum += tp[i][j];
+    for (int i = 1; i <= longs; i++) {
+        for (int j = 1; j <= lats; j++) {
+            for (int l = 1; l <= layers; l++) {
+                sum += tp[i][j][l];
+            }
         }
     }
-	return sum / (rows * cols);
+	return sum / (longs * lats * layers);
 }
 
 /*
@@ -346,22 +531,42 @@ double getReferenceTemperature(double tp[rows + 2][cols + 2]) {
  *	flowType:
  *	    flow type
  */
-void applyTemperatureForce(double a[rows + 2][cols + 2], double tp[rows + 2][cols + 2], double beta, FlowType flowType) {
+void applyTemperatureForce(double a[longs + 2][lats + 2][layers + 2], double tp[longs + 2][lats + 2][layers + 2], double beta, FlowType flowType) {
 	// DONE: buoyancy forces
 	// Apply the buoyancy force and update array *a*.
 	// For more details, see Foster and Metaxas [1997] Equation 2.
 
-    if (flowType == vertical) {
-        double t_ref = getReferenceTemperature(tp);
-        for (int j = 1; j <= cols; j++) {
-            for (int i = 1; i <= rows; i++) {
-                a[i][j] += dt * beta * (tp[i][j] - t_ref);
+    if (flowType != vertical) return;
+    double t_ref = getReferenceTemperature(tp);
+//    double t_ref = 0;
+    for (int j = 1; j <= lats; j++) {
+        for (int i = 1; i <= longs; i++) {
+            for (int l = 1; l <= layers; l++) {
+                a[i][j][l] += dt * beta * (tp[i][j][l] - t_ref);
 //                a[i][j] += dt * beta * (tp[i][j] - tpAvg[j - 1]);
 //                a[i][j] += dt * beta * (tp[i][j]);
             }
         }
     }
     setBnd(a, flowType);
+}
+
+void applyCoriolisForce(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][lats + 2][layers + 2],
+                        double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][lats + 2][layers + 2],
+                        double omega, FlowType flowType) {
+    // Apply the coriolis force and update array *a*.
+    // F = (fv, -fu, ~0) where f = 2*omega*sin(lat)
+
+    if (flowType != zonal && flowType != meridional) return;
+    for (int j = 1; j <= lats; j++) {
+        double f = 2 * omega * cos((j - .5) * M_PI / lats);
+        for (int i = 1; i <= longs; i++) {
+            for (int l = 1; l <= layers; l++) {
+                a1[i][j][l] = a0[i][j][l] + dt * f * ((flowType == zonal) ? vy[i][j][l] : -vx[i][j][l]);
+            }
+        }
+    }
+    setBnd(a1, flowType);
 }
 
 /*
@@ -379,132 +584,153 @@ void step() {
 
 
     // Vel_step
-    addSource(vxSrc, cur_vx); addSource(vySrc, cur_vy);
+//    addSource(vxSrc, cur_vx); addSource(vySrc, cur_vy);
 
-    applyTemperatureForce(cur_vx, cur_tp, buoyancy, horizontal);
-    applyTemperatureForce(cur_vy, cur_tp, buoyancy, vertical);
-
-    diffuse(cur_vx, next_vx, nv, horizontal);
-    diffuse(cur_vy, next_vy, nv, vertical);
+    applyTemperatureForce(cur_vz, cur_tp, buoyancy, vertical);
+    applyCoriolisForce(cur_vx, next_vx, cur_vx, cur_vy, planetary_rotation, zonal);
+    applyCoriolisForce(cur_vy, next_vy, cur_vx, cur_vy, planetary_rotation, meridional);
     swap(cur_vx, next_vx); swap(cur_vy, next_vy);
 
-    project(cur_vx, cur_vy); // Project to improve result of advect
-    advect(cur_vx, next_vx, cur_vx, cur_vy, horizontal);
-    advect(cur_vy, next_vy, cur_vx, cur_vy, vertical);
-    project(next_vx, next_vy);
-    swap(cur_vx, next_vx); swap(cur_vy, next_vy);
+    diffuse(cur_vx, next_vx, nv, zonal);
+    diffuse(cur_vy, next_vy, nv, meridional);
+    diffuse(cur_vz, next_vz, nv, vertical);
+    swap(cur_vx, next_vx); swap(cur_vy, next_vy); swap(cur_vz, next_vz);
+
+    project(cur_vx, cur_vy, cur_vz); // Project to improve result of advect
+    advect(cur_vx, next_vx, cur_vx, cur_vy, cur_vz, zonal);
+    advect(cur_vy, next_vy, cur_vx, cur_vy, cur_vz, meridional);
+    advect(cur_vz, next_vz, cur_vx, cur_vy, cur_vz, vertical);
+    project(next_vx, next_vy, next_vz);
+    swap(cur_vx, next_vx); swap(cur_vy, next_vy); swap(cur_vz, next_vz);
 
     // Temp_step
-//    addSource(tpSrc, cur_tp);
+    addSource(tpSrc, cur_tp);
     diffuse(cur_tp, next_tp, kappa, temperature);
     swap(cur_tp, next_tp);
-    advect(cur_tp, next_tp, cur_vx, cur_vy, temperature);
+    advect(cur_tp, next_tp, cur_vx, cur_vy, cur_vz, temperature);
 //    advect(cur_tp, next_tp, next_vx, next_vy, other);
     swap(cur_tp, next_tp);
 
 	// Please DO NOT change the following
 	simTime += dt;
 	//updateGrid();
-	updateFilament();
-	memset(vxSrc, 0, sizeof(vxSrc));
-	memset(vySrc, 0, sizeof(vySrc));
+//	updateFilament();
+//	memset(vxSrc, 0, sizeof(vxSrc));
+//	memset(vySrc, 0, sizeof(vySrc));
 
 //    memset(tpSrc, 0, sizeof(tpSrc));
 }
 
 void updateGrid() {
-	for (size_t i = 0; i <= rows; ++i)
-		for (size_t j = 0; j <= cols; ++j) {
-			float v00 = cur_tp[i][j];
-			float v01 = cur_tp[i + 1][j];
-			float v10 = cur_tp[i][j + 1];
-			float v11 = cur_tp[i + 1][j + 1];
-			// Weird interpolation because the quad is rendered as 2 triangles?
-			// Maybe this can help: https://jcgt.org/published/0011/03/04/paper.pdf
-			double t = bilinearInterpolate(0.5, 0.5, v00, v01, v10, v11);
-			gridVertices[i][j].r = 0;
-			gridVertices[i][j].g = 0;
-			gridVertices[i][j].b = 0;
-			if (t > 0) {
-				gridVertices[i][j].r = (GLfloat)std::min(1.0, t);
-			} else if (t < 0) {
-				gridVertices[i][j].b = (GLfloat)std::min(1.0, -t);
-			}
-		}
+    for (size_t l = 0; l <= layers; ++l)
+        for (size_t i = 0; i <= longs; ++i)
+            for (size_t j = 0; j <= lats; ++j) {
+                double v00 = .5*(cur_tp[i][j][l] + cur_tp[i][j][l + 1]);
+                double v01 = .5*(cur_tp[i][j + 1][l] + cur_tp[i][j + 1][l + 1]);
+                double v10 = .5*(cur_tp[i + 1][j][l] + cur_tp[i + 1][j][l + 1]);
+                double v11 = .5*(cur_tp[i + 1][j + 1][l] + cur_tp[i + 1][j + 1][l + 1]);
+                // Weird interpolation because the quad is rendered as 2 triangles?
+                // Maybe this can help: https://jcgt.org/published/0011/03/04/paper.pdf
+                double t = bilinearInterpolate(0.5, 0.5, v00, v01, v10, v11);
+                gridVertices[i][j][l].r = 0;
+                gridVertices[i][j][l].g = 0;
+                gridVertices[i][j][l].b = 0;
+                if (t > 0) {
+                    gridVertices[i][j][l].r = (GLfloat)std::min(1.0, t);
+                } else if (t < 0) {
+                    gridVertices[i][j][l].b = (GLfloat)std::min(1.0, -t);
+                }
+                gridVertices[i][j][l].a = (abs(t) < .1f) ? 0 : abs(t);
 
-	for (size_t i = 1; i <= rows; ++i)
-		for (size_t j = 1; j <= cols; ++j) {
-			velVertices[i - 1][j - 1][1].x = velVertices[i - 1][j - 1][0].x + cur_vx[i][j] * velScale;
-			velVertices[i - 1][j - 1][1].y = velVertices[i - 1][j - 1][0].y + cur_vy[i][j] * velScale;
-		}
+            }
+
+    for (size_t l = 0; l < layers; ++l)
+        for (size_t i = 0; i < longs; ++i)
+            for (size_t j = 0; j < lats; ++j) {
+                // TODO deal with flip of coordinates
+                velVertices[i][j][l][1].x = velVertices[i][j][l][0].x + cur_vx[i + 1][j + 1][l + 1] * velScale;
+                velVertices[i][j][l][1].y = velVertices[i][j][l][0].y + cur_vy[i + 1][j + 1][l + 1] * velScale;
+                velVertices[i][j][l][1].z = velVertices[i][j][l][0].z + cur_vz[i + 1][j + 1][l + 1] * velScale;
+
+//                if (abs(cur_vx[i + 1][j + 1][l + 1]) < EPSILON
+//                    && abs(cur_vy[i + 1][j + 1][l + 1]) < EPSILON
+//                    && abs(cur_vz[i + 1][j + 1][l + 1]) < EPSILON) {
+//                    velVertices[i][j][l][0].a = 0;
+//                    velVertices[i][j][l][1].a = 0;
+//                } else {
+//                    velVertices[i][j][l][0].a = 1;
+//                    velVertices[i][j][l][1].a = 1;
+//                }
+
+            }
 }
 
-double dist(const Vertex &a, const Vertex &b) {
-    double x = a.x - b.x;
-    double y = a.y - b.y;
-    return std::sqrt(x*x + y*y);
-}
+//double dist(const Vertex &a, const Vertex &b) {
+//    double x = a.x - b.x;
+//    double y = a.y - b.y;
+//    return std::sqrt(x*x + y*y);
+//}
 
-void addFilament(double x, double y) {
-	filaments.push_back(make_shared<vector<Vertex>>());
-	for (size_t i = 0; i <= rows; ++i) {
-		filaments.back()->push_back(Vertex(x, (float)i * cellSize, 1.0f, 1.0f, 1.0f, 1.0f));
-	}
-	ages.push_back(0);
+//void addFilament(double x, double y) {
+//	filaments.push_back(make_shared<vector<Vertex>>());
+//	for (size_t i = 0; i <= longs; ++i) {
+//		filaments.back()->push_back(Vertex(x, (float)i * cellSize, 0.f, 1.0f, 1.0f, 1.0f, 1.0f));
+//	}
+//	ages.push_back(0);
+//
+//	filaments.push_back(make_shared<vector<Vertex>>());
+//	for (size_t i = 0; i <= lats; ++i) {
+//		filaments.back()->push_back(Vertex((float)i * cellSize, y, 0.f, 1.0f, 1.0f, 1.0f, 1.0f));
+//	}
+//	ages.push_back(0);
+//}
 
-	filaments.push_back(make_shared<vector<Vertex>>());
-	for (size_t i = 0; i <= cols; ++i) {
-		filaments.back()->push_back(Vertex((float)i * cellSize, y, 1.0f, 1.0f, 1.0f, 1.0f));
-	}
-	ages.push_back(0);
-}
-
-void updateFilament() {
-	while (!ages.empty() && ages.front() > maxAge) {
-		ages.pop_front();
-		filaments.pop_front();
-	}
-	for (size_t i = 0; i < filaments.size(); ++i) {
-		ages[i] += dt;
-		shared_ptr<vector<Vertex>> tmp = make_shared<vector<Vertex>>();
-		tmp->push_back(filaments[i]->front());
-		for (size_t j = 1; j < filaments[i]->size(); ++j) {
-			const Vertex &a = tmp->back();
-			const Vertex &b = filaments[i]->at(j);
-			if (dist(a, b) > refinementThreshold) {
-				tmp->push_back(Vertex((a.x + b.x)/2, (a.y + b.y)/2, b.r, b.g, b.b, b.a));
-			}
-			tmp->push_back(b);
-		}
-		filaments[i] = tmp;
-		for (Vertex &v: *filaments[i]) {
-			double x = v.x/cellSize + 0.5;
-			double y = v.y/cellSize + 0.5;
-			size_t j0 = (size_t)x;
-			size_t i0 = (size_t)y;
-			size_t i1 = i0 + 1, j1 = j0 + 1;
-			x -= j0;
-			y -= i0;
-			double v00, v01, v10, v11;
-			double vx, vy;
-			v00 = cur_vx[i0][j0];
-			v01 = cur_vx[i1][j0];
-			v10 = cur_vx[i0][j1];
-			v11 = cur_vx[i1][j1];
-			vx = bilinearInterpolate(x, y, v00, v01, v10, v11);
-			v00 = cur_vy[i0][j0];
-			v01 = cur_vy[i1][j0];
-			v10 = cur_vy[i0][j1];
-			v11 = cur_vy[i1][j1];
-			vy = bilinearInterpolate(x, y, v00, v01, v10, v11);
-			v.x += (float)vx * dt * cellSize;
-			v.y += (float)vy * dt * cellSize;
-			v.x = std::max(0.f, v.x);
-			v.x = std::min((float)frameWidth, v.x);
-			v.y = std::max(0.f, v.y);
-			v.y = std::min((float)frameHeight, v.y);
-			if (ages[i] > maxAge / 2)
-			v.a = 2 - (float)ages[i] / (maxAge / 2);
-		}
-	}
-}
+//void updateFilament() {
+//	while (!ages.empty() && ages.front() > maxAge) {
+//		ages.pop_front();
+//		filaments.pop_front();
+//	}
+//	for (size_t i = 0; i < filaments.size(); ++i) {
+//		ages[i] += dt;
+//		shared_ptr<vector<Vertex>> tmp = make_shared<vector<Vertex>>();
+//		tmp->push_back(filaments[i]->front());
+//		for (size_t j = 1; j < filaments[i]->size(); ++j) {
+//			const Vertex &a = tmp->back();
+//			const Vertex &b = filaments[i]->at(j);
+//			if (dist(a, b) > refinementThreshold) {
+//				tmp->push_back(Vertex((a.x + b.x)/2, (a.y + b.y)/2, 0.f, b.r, b.g, b.b, b.a));
+//			}
+//			tmp->push_back(b);
+//		}
+//		filaments[i] = tmp;
+//		for (Vertex &v: *filaments[i]) {
+//			double x = v.x/cellSize + 0.5;
+//			double y = v.y/cellSize + 0.5;
+//			size_t j0 = (size_t)x;
+//			size_t i0 = (size_t)y;
+//			size_t i1 = i0 + 1, j1 = j0 + 1;
+//			x -= j0;
+//			y -= i0;
+//			double v00, v01, v10, v11;
+//			double vx, vy;
+//			v00 = cur_vx[i0][j0];
+//			v01 = cur_vx[i1][j0];
+//			v10 = cur_vx[i0][j1];
+//			v11 = cur_vx[i1][j1];
+//			vx = bilinearInterpolate(x, y, v00, v01, v10, v11);
+//			v00 = cur_vy[i0][j0];
+//			v01 = cur_vy[i1][j0];
+//			v10 = cur_vy[i0][j1];
+//			v11 = cur_vy[i1][j1];
+//			vy = bilinearInterpolate(x, y, v00, v01, v10, v11);
+//			v.x += (float)vx * dt * cellSize;
+//			v.y += (float)vy * dt * cellSize;
+//			v.x = std::max(0.f, v.x);
+//			v.x = std::min((float)frameWidth, v.x);
+//			v.y = std::max(0.f, v.y);
+//			v.y = std::min((float)frameHeight, v.y);
+//			if (ages[i] > maxAge / 2)
+//			v.a = 2 - (float)ages[i] / (maxAge / 2);
+//		}
+//	}
+//}
