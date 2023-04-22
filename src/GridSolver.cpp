@@ -24,8 +24,8 @@ float dx = 1; // size of a cell in simulation
 //float dz = 1; // distance between vertical layers in simulation
 float velScale = 10.0f; // scaling for display
 float buoyancy = 0.5f; // buoyancy force coefficient
-float planetary_rotation = 2.0f;
-float external_heat_factor = 0.0f;
+float planetary_rotation = 2.0f; // Rotation = 2 for videos (1 for external heat vids, then 2 for last one)
+float external_heat_factor = 1.0f; // .1, .5, 1.
 int iterations = 20; // number of iterations for iterative solvers (Gauss–Seidel, Conjugate Gradients, etc.)
 
 /*
@@ -259,8 +259,10 @@ void setBnd(GridArray<double> &a, FlowType flowType) {
         for (int j = 1; j <= lats; ++j)
         {
             a.at(i, j, 0) = flowType == temperature ? 2*(BOT_TEMP) - a.at(i, j, 1) :
-                         flowType == other ? a.at(i, j, 1) :
-                         -a.at(i, j, 1); // No slip condition
+                         flowType == vertical ? -a.at(i, j, 1) :
+                         a.at(i, j, 1);
+//                         flowType == other ? a.at(i, j, 1) :
+//                         -a.at(i, j, 1); // No slip condition
             a.at(i, j, layers + 1) = flowType == temperature ? 2*(TOP_TEMP) - a.at(i,j,layers) :
                                   flowType == vertical ? -a.at(i,j,layers) :
                                   a.at(i,j,layers);
@@ -443,13 +445,16 @@ void project(GridArray<double> &vx, GridArray<double> &vy, GridArray<double> &vz
     for (int i = 1; i <= longs; i++)
         for (int j = 1; j <= lats; j++) {
             for (int l = 1; l <= layers; l++) {
-                s_div.at(i-1, j-1, l-1) = -0.5*dx*(vx.at(i+1,j,l) - vx.at(i-1,j,l) + vy.at(i,j+1,l) - vy.at(i,j-1,l) + vz.at(i,j,l+1) - vz.at(i,j,l-1));
+                s_div.at(i-1, j-1, l-1) =
+                        -0.5*dx*(
+                                vx.at(i+1,j,l) - vx.at(i-1,j,l)
+                                + vy.at(i,j+1,l) - vy.at(i,j-1,l)
+                                + vz.at(i,j,l+1) - vz.at(i,j,l-1));
                 s_p.at(i,j,l) = 0;
             }
         }
 //    setBnd(s_div, other);
     setBnd(s_p, other);
-
 
     bool hasConverged;
     double max_diff;
@@ -459,7 +464,9 @@ void project(GridArray<double> &vx, GridArray<double> &vy, GridArray<double> &vz
         for (int i = 1; i <= longs; i++) {
             for (int j = 1; j <= lats; j++) {
                 for (int l = 1; l <= layers; l++) {
-                    double p = (s_div.at(i-1, j-1, l-1) + s_p.at(i-1,j,l) + s_p.at(i+1,j,l) + s_p.at(i,j-1,l) + s_p.at(i,j+1,l)
+                    double p = (s_div.at(i-1, j-1, l-1)
+                            + s_p.at(i-1,j,l) + s_p.at(i+1,j,l)
+                            + s_p.at(i,j-1,l) + s_p.at(i,j+1,l)
                             + s_p.at(i,j,l-1) + s_p.at(i,j,l+1))/6;
                     double diff = abs(p - s_p.at(i,j,l));
                     if (diff > EPSILON) {

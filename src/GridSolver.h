@@ -12,7 +12,7 @@
 #include "Vertex.h"
 #include "Array3D.h"
 
-const int res = 5;
+const int res = 2;
 #ifndef BIG_GRID
 const int cols = 25, rows = 20;
 const int cellSize = 40; // cell size in display
