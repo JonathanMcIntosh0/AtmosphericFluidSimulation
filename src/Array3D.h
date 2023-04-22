@@ -6,6 +6,7 @@
 #define COMP559FINALPROJ_ARRAY3D_H
 
 #include <vector>
+#include <iostream>
 
 template <class T, size_t X, size_t Y, size_t Z>
 class Array3D
@@ -30,9 +31,12 @@ public:
         return buffer[x*size_YZ + y*size_Z + z];
     }
 
+    inline void fill(type val) { std::fill(buffer.begin(), buffer.end(), val); }
+    inline type* data() { return &buffer[0]; }
+
+    std::vector<T> buffer;
 private:
     const int size_YZ = Y * Z;
-    std::vector<T> buffer;
 };
 
 #endif //COMP559FINALPROJ_ARRAY3D_H

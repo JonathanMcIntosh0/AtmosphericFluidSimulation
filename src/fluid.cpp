@@ -305,7 +305,7 @@ int main(void) {
 		ImGui::Text("\tright button     - add/delete heat source\n\tmiddle button    - add filament\n\tleft button drag - add force\n\tscrolling        - temperature control");
 		ImGui::Text("simTime: %6.2f", simTime);
 		ImGui::Text("srcTemp: %6.2f", pointedTemp);
-		ImGui::Text("avgTemp: %6.2f", (float)getReferenceTemperature(cur_tp));
+		ImGui::Text("avgTemp: %6.2f", (float)getReferenceTemperature(*cur_tp));
 		ImGui::SliderInt("speed", &speed, 1, 10);
 		ImGui::Checkbox("recordFrames", &recordFrames);
 		ImGui::SliderFloat("dt", &dt, 0.0001f, 0.1f);
@@ -379,35 +379,35 @@ int main(void) {
 
 //		Buffer gridBuffer(attrSizes, (GLfloat*)gridVertices, sizeof(gridVertices), gridIndices, sizeof(gridIndices));
         if (showTemp) {
-            Buffer gridBuffer(attrSizes, (GLfloat*)gridVertices, sizeof(gridVertices));
+            Buffer gridBuffer(attrSizes, (GLfloat*) &gridVertices.buffer[0], (longs + 1) * (lats + 1) * (layers + 1) * sizeof (Vertex));
             if (tpMode_all){
                 glPointSize(5.f);
                 gridBuffer.draw(GL_POINTS);
             } else {
                 gridBuffer.bind();
                 if (tpMode_mer)
-                    glDrawElements(GL_TRIANGLES, 6 * lats * layers, GL_UNSIGNED_INT, gridIndices_long[tpIdx_long].data());
+                    glDrawElements(GL_TRIANGLES, 6 * lats * layers, GL_UNSIGNED_INT, &gridIndices_long[tpIdx_long][0]);
                 if (tpMode_zon)
-                    glDrawElements(GL_TRIANGLES, 6 * longs * layers, GL_UNSIGNED_INT, gridIndices_lat[tpIdx_lat].data());
+                    glDrawElements(GL_TRIANGLES, 6 * longs * layers, GL_UNSIGNED_INT, &gridIndices_lat[tpIdx_lat][0]);
                 if (tpMode_ver)
-                    glDrawElements(GL_TRIANGLES, 6 * longs * lats, GL_UNSIGNED_INT, gridIndices_vert[tpIdx_layer].data());
+                    glDrawElements(GL_TRIANGLES, 6 * longs * lats, GL_UNSIGNED_INT, &gridIndices_vert[tpIdx_layer][0]);
                 gridBuffer.unbind();
             }
         }
 
 
         if (showVel) {
-            Buffer velBuffer(attrSizes, (GLfloat*)velVertices, sizeof(velVertices));
+            Buffer velBuffer(attrSizes, (GLfloat*) &velVertices.buffer[0][0], 2 * longs * lats * layers * sizeof (Vertex));
             if (velMode_all) {
                 velBuffer.draw(GL_LINES);
             } else {
                 velBuffer.bind();
                 if (velMode_long)
-                    glDrawElements(GL_LINES, 2 * lats * layers, GL_UNSIGNED_INT, velIndices_long[velIdx_long].data());
+                    glDrawElements(GL_LINES, 2 * lats * layers, GL_UNSIGNED_INT, &velIndices_long[velIdx_long][0]);
                 if (velMode_lat)
-                    glDrawElements(GL_LINES, 2 * longs * layers, GL_UNSIGNED_INT, velIndices_lat[velIdx_lat].data());
+                    glDrawElements(GL_LINES, 2 * longs * layers, GL_UNSIGNED_INT, &velIndices_lat[velIdx_lat][0]);
                 if (velMode_ver)
-                    glDrawElements(GL_LINES, 2 * longs * lats, GL_UNSIGNED_INT, velIndices_vert[velIdx_layer].data());
+                    glDrawElements(GL_LINES, 2 * longs * lats, GL_UNSIGNED_INT, &velIndices_vert[velIdx_layer][0]);
                 velBuffer.unbind();
             }
         }

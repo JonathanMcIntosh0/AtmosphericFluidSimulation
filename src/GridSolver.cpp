@@ -10,7 +10,6 @@
 #define TOP_TEMP (-1)
 #define BOT_TEMP 1
 #define EPSILON 0.0001f
-#define IX(i, j, l) (i * (longs + 2) * (lats + 2) + j * (layers + 2))
 
 using std::vector;
 using std::swap;
@@ -25,8 +24,8 @@ float dx = 1; // size of a cell in simulation
 //float dz = 1; // distance between vertical layers in simulation
 float velScale = 10.0f; // scaling for display
 float buoyancy = 0.5f; // buoyancy force coefficient
-float planetary_rotation = 0.7f;
-float refinementThreshold = 20.0f;
+float planetary_rotation = 2.0f;
+float external_heat_factor = 0.0f;
 int iterations = 20; // number of iterations for iterative solvers (Gauss–Seidel, Conjugate Gradients, etc.)
 
 /*
@@ -38,32 +37,22 @@ int iterations = 20; // number of iterations for iterative solvers (Gauss–Seid
  * Also note that the first rows/columns and last rows/columns are for the boundary.
  */
 // velocity
-double vx[2][longs + 2][lats + 2][layers + 2];
-double vy[2][longs + 2][lats + 2][layers + 2];
-double vz[2][longs + 2][lats + 2][layers + 2];
+GridArray<double> vx [2] { GridArray<double>(), GridArray<double>() };
+GridArray<double> vy [2] { GridArray<double>(), GridArray<double>() };
+GridArray<double> vz [2] { GridArray<double>(), GridArray<double>() };
 
 // temperature
-//double tp[2][longs + 2][lats + 2][layers + 2];
-Array3D<double> tp [2] = { std::vector<double>(N_CELLS), std::vector<double>(N_CELLS) };
+GridArray<double> tp [2] { GridArray<double>(), GridArray<double>() };
 
 // pointers for the corresponding quantities in the current and the next states
-double (*cur_vx)[lats + 2][layers + 2] = vx[0], (*next_vx)[lats + 2][layers + 2] = vx[1];
-double (*cur_vy)[lats + 2][layers + 2] = vy[0], (*next_vy)[lats + 2][layers + 2] = vy[1];
-double (*cur_vz)[lats + 2][layers + 2] = vz[0], (*next_vz)[lats + 2][layers + 2] = vz[1];
-//double (*cur_tp)[lats + 2][layers + 2] = tp[0], (*next_tp)[lats + 2][layers + 2] = tp[1];
-Array3D<double, longs+2, lats+2, layers+2> *cur_tp = tp[0].data(), *next_tp = tp[1].data();
+GridArray<double> *cur_vx = &vx[0], *next_vx = &vx[1];
+GridArray<double> *cur_vy = &vy[0], *next_vy = &vy[1];
+GridArray<double> *cur_vz = &vz[0], *next_vz = &vz[1];
+GridArray<double> *cur_tp = &tp[0], *next_tp = &tp[1];
 
-// flow source
-//double vxSrc[rows + 2][cols + 2];
-//double vySrc[rows + 2][cols + 2];
 // heat source
-double tpSrc[longs + 2][lats + 2][layers + 2];
+GridArray<double> tpSrc;
 //double tpAvg[lats];
-
-//filament
-//deque<shared_ptr<vector<Vertex>>> filaments;
-//deque<double> ages;
-//float maxAge = 10;
 
 /*
  * Flow type:
@@ -73,39 +62,35 @@ double tpSrc[longs + 2][lats + 2][layers + 2];
  *	other: quantities like temperature, density, etc.
  */
 enum FlowType { zonal, meridional, vertical, temperature, other };
-void setBnd(double a[longs + 2][lats + 2][layers + 2], FlowType flowType);
+void setBnd(GridArray<double> &a, FlowType flowType);
 
-Vertex gridVertices[1][1][1];
-//Vertex gridVertices[longs + 1][lats + 1][layers + 1];
+//Vertex gridVertices[1][1][1];
+Array3D<Vertex, longs + 1, lats + 1, layers + 1> gridVertices;
 std::vector<std::vector<GLuint>> gridIndices_long(longs + 1, std::vector<GLuint>(6 * lats * layers));
 std::vector<std::vector<GLuint>> gridIndices_lat(lats + 1, std::vector<GLuint>(6 * longs * layers));
 std::vector<std::vector<GLuint>> gridIndices_vert(layers + 1, std::vector<GLuint>(6 * longs * lats));
 
-Vertex velVertices[1][1][1][2];
-//Vertex velVertices[longs][lats][layers][2];
+Array3D<Vertex[2], longs, lats, layers> velVertices;
 std::vector<std::vector<GLuint>> velIndices_long(longs, std::vector<GLuint>(2 * lats * layers));
 std::vector<std::vector<GLuint>> velIndices_lat(lats, std::vector<GLuint>(2 * longs * layers));
 std::vector<std::vector<GLuint>> velIndices_vert(layers, std::vector<GLuint>(2 * longs * lats));
 
 void initGrid() {
-    memset(vx, 0, sizeof(vx));
-    memset(vy, 0, sizeof(vy));
-    memset(vz, 0, sizeof(vz));
-    memset(tp, 0, sizeof(tp));
-//	memset(vxSrc, 0, sizeof(vxSrc));
-//	memset(vySrc, 0, sizeof(vySrc));
-    memset(tpSrc, 0, sizeof(tpSrc));
-//    memset(tpAvg, 0, sizeof(tpAvg));
-//	filaments.clear();
-//	ages.clear();
-    cur_vx = vx[0];
-    cur_vy = vy[0];
-    cur_vz = vz[0];
-    cur_tp = tp[0].data();
-    next_vx = vx[1];
-    next_vy = vy[1];
-    next_vz = vz[1];
-    next_tp = tp[1].data();
+    vx[0].fill(0); vx[1].fill(0);
+    vy[0].fill(0); vy[1].fill(0);
+    vz[0].fill(0); vz[1].fill(0);
+    tp[0].fill(0); tp[1].fill(0);
+    
+    tpSrc.fill(0);
+    
+    cur_vx = &vx[0];
+    cur_vy = &vy[0];
+    cur_vz = &vz[0];
+    cur_tp = &tp[0];
+    next_vx = &vx[1];
+    next_vy = &vy[1];
+    next_vz = &vz[1];
+    next_tp = &tp[1];
 
     //Set tpAvg (linear function from -1 to 1)
 //    tpAvg[0] = -1.0;
@@ -120,21 +105,21 @@ void initGrid() {
         double ext_heat = -cos(2 * (j - .5) * M_PI / lats);
         for (size_t l = 1; l <= layers; ++l) {
             for (size_t i = 1; i <= longs; ++i) {
-                tpSrc[i][j][l] = .01 * ext_heat;
+                tpSrc.at(i, j, l) = external_heat_factor * ext_heat;
             }
         }
     }
 
     // Init temperature buffers
-    GLuint indices[longs + 1][lats + 1][layers + 1];
+    Array3D<GLuint, longs + 1, lats + 1, layers + 1> indices;
     GLuint idx = 0;
     for (size_t i = 0; i <= longs; ++i) {
         for (size_t j = 0; j <= lats; ++j) {
             for (size_t l = 0; l <= layers; ++l) {
                 // TODO possibly deal with flip of coords??
-                gridVertices[i][j][l] = Vertex((float) i * cellSize, (float) j * cellSize, (float) l * cellSize, 0.f,
+                gridVertices.at(i, j, l) = Vertex((float) i * cellSize, (float) j * cellSize, (float) l * cellSize, 0.f,
                                                0.f, 0.f, 1.f);
-                indices[i][j][l] = idx++;
+                indices.at(i, j, l) = idx++;
             }
         }
     }
@@ -145,30 +130,30 @@ void initGrid() {
                 size_t tmp;
                 if (j != lats && l != layers) {
                     tmp = 6 * (j * layers + l);
-                    gridIndices_long[i][tmp++] = indices[i][j][l];
-                    gridIndices_long[i][tmp++] = indices[i][j + 1][l];
-                    gridIndices_long[i][tmp++] = indices[i][j + 1][l + 1];
-                    gridIndices_long[i][tmp++] = indices[i][j][l];
-                    gridIndices_long[i][tmp++] = indices[i][j][l + 1];
-                    gridIndices_long[i][tmp++] = indices[i][j + 1][l + 1];
+                    gridIndices_long[i][tmp++] = indices.at(i, j, l);
+                    gridIndices_long[i][tmp++] = indices.at(i, j + 1, l);
+                    gridIndices_long[i][tmp++] = indices.at(i, j + 1, l + 1);
+                    gridIndices_long[i][tmp++] = indices.at(i, j, l);
+                    gridIndices_long[i][tmp++] = indices.at(i, j, l + 1);
+                    gridIndices_long[i][tmp++] = indices.at(i, j + 1, l + 1);
                 }
                 if (i != longs && l != layers) {
                     tmp = 6 * (i * layers + l);
-                    gridIndices_lat[j][tmp++] = indices[i][j][l];
-                    gridIndices_lat[j][tmp++] = indices[i + 1][j][l];
-                    gridIndices_lat[j][tmp++] = indices[i + 1][j][l + 1];
-                    gridIndices_lat[j][tmp++] = indices[i][j][l];
-                    gridIndices_lat[j][tmp++] = indices[i][j][l + 1];
-                    gridIndices_lat[j][tmp++] = indices[i + 1][j][l + 1];
+                    gridIndices_lat[j][tmp++] = indices.at(i, j, l);
+                    gridIndices_lat[j][tmp++] = indices.at(i + 1, j, l);
+                    gridIndices_lat[j][tmp++] = indices.at(i + 1, j, l + 1);
+                    gridIndices_lat[j][tmp++] = indices.at(i, j, l);
+                    gridIndices_lat[j][tmp++] = indices.at(i, j, l + 1);
+                    gridIndices_lat[j][tmp++] = indices.at(i + 1, j, l + 1);
                 }
                 if (i != longs && j != lats) {
                     tmp = 6 * (i * lats + j);
-                    gridIndices_vert[l][tmp++] = indices[i][j][l];
-                    gridIndices_vert[l][tmp++] = indices[i + 1][j][l];
-                    gridIndices_vert[l][tmp++] = indices[i + 1][j + 1][l];
-                    gridIndices_vert[l][tmp++] = indices[i][j][l];
-                    gridIndices_vert[l][tmp++] = indices[i][j + 1][l];
-                    gridIndices_vert[l][tmp++] = indices[i + 1][j + 1][l];
+                    gridIndices_vert[l][tmp++] = indices.at(i, j, l);
+                    gridIndices_vert[l][tmp++] = indices.at(i + 1, j, l);
+                    gridIndices_vert[l][tmp++] = indices.at(i + 1, j + 1, l);
+                    gridIndices_vert[l][tmp++] = indices.at(i, j, l);
+                    gridIndices_vert[l][tmp++] = indices.at(i, j + 1, l);
+                    gridIndices_vert[l][tmp++] = indices.at(i + 1, j + 1, l);
                 }
             }
         }
@@ -180,12 +165,12 @@ void initGrid() {
     for (size_t i = 0; i < longs; ++i) {
         for (size_t j = 0; j < lats; ++j) {
             for (size_t l = 0; l < layers; ++l) {
-                velVertices[i][j][l][0] = Vertex(
+                velVertices.at(i, j, l)[0] = Vertex(
                         (float) (i + 0.5) * cellSize,
                         (float) (j + 0.5) * cellSize,
                         (float) (l + 0.5) * cellSize,
                         0.f, 1.f, 0.f, 1.f);
-                velVertices[i][j][l][1] = Vertex(
+                velVertices.at(i, j, l)[1] = Vertex(
                         (float) (i + 0.5) * cellSize,
                         (float) (j + 0.5) * cellSize,
                         (float) (l + 0.5) * cellSize,
@@ -266,35 +251,35 @@ double bilinearInterpolate(double x, double y, double v00, double v01, double v1
  *	    vertical flow (the interpolated quantity will goes to zero at the horizontal boundaries),
  *	    other (e.g., temperature, density, which are not really flow... only continuity need to be guaranteed.)
  */
-void setBnd(double a[longs + 2][lats + 2][layers + 2], FlowType flowType) {
+void setBnd(GridArray<double> &a, FlowType flowType) {
 	// DONE: Set up the boundary according to the flow type.
 
     // TOP and BOTTOM boundaries
     for (int i = 1; i <= longs; ++i)
         for (int j = 1; j <= lats; ++j)
         {
-            a[i][j][0] = flowType == temperature ? 2*(BOT_TEMP) - a[i][j][1] :
-                         flowType == vertical ? -a[i][j][1] :
-                         a[i][j][1];
-            a[i][j][layers + 1] = flowType == temperature ? 2*(TOP_TEMP) - a[i][j][layers] :
-                                  flowType == vertical ? -a[i][j][layers] :
-                                  a[i][j][layers];
+            a.at(i, j, 0) = flowType == temperature ? 2*(BOT_TEMP) - a.at(i, j, 1) :
+                         flowType == other ? a.at(i, j, 1) :
+                         -a.at(i, j, 1); // No slip condition
+            a.at(i, j, layers + 1) = flowType == temperature ? 2*(TOP_TEMP) - a.at(i,j,layers) :
+                                  flowType == vertical ? -a.at(i,j,layers) :
+                                  a.at(i,j,layers);
         }
     // NORTH and SOUTH boundaries
     for (int i = 1; i <= longs; ++i) {
         for (int l = 1; l <= layers; ++l)
         {
-            a[i][0][l] = flowType == meridional ? -a[i][1][l] : a[i][1][l];
-            a[i][lats + 1][l] = flowType == meridional ? -a[i][lats][l] : a[i][lats][l];
+            a.at(i,0,l) = flowType == meridional ? -a.at(i,1,l) : a.at(i,1,l);
+            a.at(i, lats + 1, l) = flowType == meridional ? -a.at(i,lats,l) : a.at(i,lats,l);
         }
     }
 
     // NORTH and SOUTH corner zonal lines
     for (int i = 1; i <= longs; ++i) {
-        a[i][0][0] = 0.5*(a[i][1][0] + a[i][0][1]);
-        a[i][0][layers + 1] = 0.5 * (a[i][1][layers + 1] + a[i][0][layers]);
-        a[i][lats + 1][0] = 0.5 * (a[i][lats][0] + a[i][lats + 1][1]);
-        a[i][lats + 1][layers + 1] = 0.5 * (a[i][lats][layers + 1] + a[i][lats + 1][layers]);
+        a.at(i, 0, 0) = 0.5*(a.at(i, 1, 0) + a.at(i, 0, 1));
+        a.at(i, 0, layers + 1) = 0.5 * (a.at(i, 1, layers + 1) + a.at(i, 0, layers));
+        a.at(i, lats + 1, 0) = 0.5 * (a.at(i, lats, 0) + a.at(i, lats + 1, 1));
+        a.at(i, lats + 1, layers + 1) = 0.5 * (a.at(i, lats, layers + 1) + a.at(i, lats + 1, layers));
     }
 
     // EAST and WEST boundaries TODO check that other boundaries with wrap-around part is fine
@@ -303,8 +288,8 @@ void setBnd(double a[longs + 2][lats + 2][layers + 2], FlowType flowType) {
         {
 //            a[0][i][j] = flowType == other ? a[1][i][j] : a[longs][i][j];
 //            a[longs + 1][i][j] = flowType == other ? a[longs][i][j] : a[1][i][j];
-            a[0][j][l] = a[longs][j][l];
-            a[longs + 1][j][l] = a[1][j][l];
+            a.at(0, j, l) = a.at(longs, j, l);
+            a.at(longs + 1, j, l) = a.at(1, j, l);
         }
 }
 
@@ -316,12 +301,12 @@ void setBnd(double a[longs + 2][lats + 2][layers + 2], FlowType flowType) {
  *	a:
  *	    target 2D array storing the quantity to modify
  */
-void addSource(double src[longs + 2][lats + 2][layers + 2], double a[longs + 2][lats + 2][layers + 2]) {
+void addSource(GridArray<double> src, GridArray<double> &a) {
 	// DONE: Add the source from array *src* to the target array *a*: e.g., a = a + dt * src
     for (int i = 0; i < longs + 2; ++i) {
         for (int j = 0; j < lats + 2; ++j) {
             for (int l = 0; l < layers + 2; ++l) {
-                a[i][j][l] += dt * src[i][j][l];
+                a.at(i,j,l) += dt * src.at(i,j,l);
             }
         }
     }
@@ -339,7 +324,7 @@ void addSource(double src[longs + 2][lats + 2][layers + 2], double a[longs + 2][
  *	flowType:
  *	    flow type
  */
-void diffuse(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][lats + 2][layers + 2], double nv, FlowType flowType) {
+void diffuse(GridArray<double> a0, GridArray<double> &a1, double nv, FlowType flowType) {
 	// DONE: diffusion
 	// Compute the diffusion part and update array *a1*.
 	// Use dt and dx for step size and cell size.
@@ -357,17 +342,17 @@ void diffuse(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][la
         for (int i = 1; i <= longs; i++) {
             for (int j = 1; j <= lats; j++) {
                 for (int l = 1; l <= layers; l++) {
-                    double b = (a0[i][j][l] +
-                                a * (a1[i-1][j][l] + a1[i+1][j][l]
-                                     + a1[i][j-1][l] + a1[i][j+1][l]
-                                     + a1[i][j][l-1] + a1[i][j][l+1])) / (1 + 6*a);
-                    double diff = abs(b - a1[i][j][l]);
+                    double b = (a0.at(i,j,l) +
+                                a * (a1.at(i-1,j,l) + a1.at(i+1,j,l)
+                                     + a1.at(i,j-1,l) + a1.at(i,j+1,l)
+                                     + a1.at(i,j,l-1) + a1.at(i,j,l+1))) / (1 + 6*a);
+                    double diff = abs(b - a1.at(i,j,l));
                     if (diff > EPSILON) {
                         hasConverged = false;
                         max_diff = fmax(max_diff, diff);
                     }
 
-                    a1[i][j][l] = b;
+                    a1.at(i,j,l) = b;
                 }
             }
         }
@@ -391,8 +376,8 @@ void diffuse(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][la
  *	flowType:
  *	    flow type
  */
-void advect(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][lats + 2][layers + 2],
-            double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][lats + 2][layers + 2], double vz[longs + 2][lats + 2][layers + 2],
+void advect(GridArray<double> a0, GridArray<double> &a1,
+            GridArray<double> vx, GridArray<double> vy, GridArray<double> vz,
             FlowType flowType) {
 	// DONE: advection
 	// Compute the advection part and update array *a1*.
@@ -405,13 +390,15 @@ void advect(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][lat
     for (int i = 1; i <= longs; i++) {
         for (int j = 1; j <= lats; j++) {
             for (int l = 1; l <= layers; l++) {
-                double x = i - dt0 * vx[i][j][l];
-                double y = j - dt0 * vy[i][j][l];
-                double z = l - dt0 * vz[i][j][l];
+                double x = i - dt0 * vx.at(i,j,l);
+                double y = j - dt0 * vy.at(i,j,l);
+                double z = l - dt0 * vz.at(i,j,l);
 
                 // Deal with wrap around for EAST-WEST (0 = longs)
-                if (x < 1) x += longs;
-                else if (x > longs) x -= longs;
+                if (x < .5)
+                    x += longs;
+                else if (x > longs + .5)
+                    x -= longs;
                 int i0 = (int) x;
                 int i1 = i0 + 1;
 
@@ -426,19 +413,20 @@ void advect(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][lat
                 int l1 = l0 + 1;
 
                 z -= l0; // z is now between 0 and 1 (0 at l0, 1 at l1)
-                double v00 = (1 - z) * a0[i0][j0][l0] + z * a0[i0][j0][l1];
-                double v01 = (1 - z) * a0[i0][j1][l0] + z * a0[i0][j1][l1];
-                double v10 = (1 - z) * a0[i1][j0][l0] + z * a0[i1][j0][l1];
-                double v11 = (1 - z) * a0[i1][j1][l0] + z * a0[i1][j1][l1];
+                double v00 = (1 - z) * a0.at(i0, j0, l0) + z * a0.at(i0, j0, l1);
+                double v01 = (1 - z) * a0.at(i0, j1, l0) + z * a0.at(i0, j1, l1);
+                double v10 = (1 - z) * a0.at(i1, j0, l0) + z * a0.at(i1, j0, l1);
+                double v11 = (1 - z) * a0.at(i1, j1, l0) + z * a0.at(i1, j1, l1);
 
-                a1[i][j][l] = bilinearInterpolate(x - i0, y - j0, v00, v01, v10, v11);
+                a1.at(i,j,l) = bilinearInterpolate(x - i0, y - j0, v00, v01, v10, v11);
             }
         }
     }
     setBnd(a1, flowType);
 }
 
-double s_p[longs + 2][lats + 2][layers + 2], s_div[longs][lats][layers];
+GridArray<double> s_p;
+Array3D<double, longs, lats, layers> s_div;
 
 /*
  * Projection for the mass conservation.
@@ -446,7 +434,7 @@ double s_p[longs + 2][lats + 2][layers + 2], s_div[longs][lats][layers];
  *	vx, vy:
  *	    the velocity field to be fixed
  */
-void project(double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][lats + 2][layers + 2], double vz[longs + 2][lats + 2][layers + 2]) {
+void project(GridArray<double> &vx, GridArray<double> &vy, GridArray<double> &vz) {
 	// DONE: projection
 	// Do a Poisson Solve to get a divergence free velocity field.
 	// Use a Gauss Seidel solve (or better, Conjugate Gradients).
@@ -455,8 +443,8 @@ void project(double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][la
     for (int i = 1; i <= longs; i++)
         for (int j = 1; j <= lats; j++) {
             for (int l = 1; l <= layers; l++) {
-                s_div[i-1][j-1][l-1] = -0.5*dx*(vx[i+1][j][l] - vx[i-1][j][l] + vy[i][j+1][l] - vy[i][j-1][l] + vz[i][j][l+1] - vz[i][j][l-1]);
-                s_p[i][j][l] = 0;
+                s_div.at(i-1, j-1, l-1) = -0.5*dx*(vx.at(i+1,j,l) - vx.at(i-1,j,l) + vy.at(i,j+1,l) - vy.at(i,j-1,l) + vz.at(i,j,l+1) - vz.at(i,j,l-1));
+                s_p.at(i,j,l) = 0;
             }
         }
 //    setBnd(s_div, other);
@@ -471,14 +459,14 @@ void project(double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][la
         for (int i = 1; i <= longs; i++) {
             for (int j = 1; j <= lats; j++) {
                 for (int l = 1; l <= layers; l++) {
-                    double p = (s_div[i-1][j-1][l-1] + s_p[i-1][j][l] + s_p[i+1][j][l] + s_p[i][j-1][l] + s_p[i][j+1][l]
-                            + s_p[i][j][l-1] + s_p[i][j][l+1])/6;
-                    double diff = abs(p - s_p[i][j][l]);
+                    double p = (s_div.at(i-1, j-1, l-1) + s_p.at(i-1,j,l) + s_p.at(i+1,j,l) + s_p.at(i,j-1,l) + s_p.at(i,j+1,l)
+                            + s_p.at(i,j,l-1) + s_p.at(i,j,l+1))/6;
+                    double diff = abs(p - s_p.at(i,j,l));
                     if (diff > EPSILON) {
                         hasConverged = false;
                         max_diff = fmax(max_diff, diff);
                     }
-                    s_p[i][j][l] = p;
+                    s_p.at(i,j,l) = p;
                 }
             }
         }
@@ -490,9 +478,9 @@ void project(double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][la
     for (int i = 1; i <= longs; i++) {
         for (int j = 1; j <= lats; j++) {
             for (int l = 1; l <= layers; l++) {
-                vx[i][j][l] -= 0.5*(s_p[i + 1][j][l] - s_p[i - 1][j][l])/dx;
-                vy[i][j][l] -= 0.5*(s_p[i][j + 1][l] - s_p[i][j - 1][l])/dx;
-                vz[i][j][l] -= 0.5*(s_p[i][j][l + 1] - s_p[i][j][l - 1])/dx;
+                vx.at(i,j,l) -= 0.5*(s_p.at(i + 1, j, l) - s_p.at(i - 1, j, l))/dx;
+                vy.at(i,j,l) -= 0.5*(s_p.at(i, j + 1, l) - s_p.at(i, j - 1, l))/dx;
+                vz.at(i,j,l) -= 0.5*(s_p.at(i, j, l + 1) - s_p.at(i, j, l - 1))/dx;
             }
         }
     }
@@ -502,17 +490,17 @@ void project(double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][la
 /*
  * Get the reference (average) temperature of the grid.
  * Parameters:
- *	tp:
+ *	temperature:
  *	    2D array storing the temperatures
  */
-double getReferenceTemperature(double tp[longs + 2][lats + 2][layers + 2]) {
-	// DONE: Sum up array *tp* and compute the average.
+double getReferenceTemperature(GridArray<double> tp) {
+	// DONE: Sum up array *temperature* and compute the average.
     // Note: assuming we don't include the boundaries in the average...
     double sum = 0;
     for (int i = 1; i <= longs; i++) {
         for (int j = 1; j <= lats; j++) {
             for (int l = 1; l <= layers; l++) {
-                sum += tp[i][j][l];
+                sum += tp.at(i, j, l);
             }
         }
     }
@@ -531,7 +519,7 @@ double getReferenceTemperature(double tp[longs + 2][lats + 2][layers + 2]) {
  *	flowType:
  *	    flow type
  */
-void applyTemperatureForce(double a[longs + 2][lats + 2][layers + 2], double tp[longs + 2][lats + 2][layers + 2], double beta, FlowType flowType) {
+void applyTemperatureForce(GridArray<double> &a, GridArray<double> tp, double beta, FlowType flowType) {
 	// DONE: buoyancy forces
 	// Apply the buoyancy force and update array *a*.
 	// For more details, see Foster and Metaxas [1997] Equation 2.
@@ -542,7 +530,7 @@ void applyTemperatureForce(double a[longs + 2][lats + 2][layers + 2], double tp[
     for (int j = 1; j <= lats; j++) {
         for (int i = 1; i <= longs; i++) {
             for (int l = 1; l <= layers; l++) {
-                a[i][j][l] += dt * beta * (tp[i][j][l] - t_ref);
+                a.at(i,j,l) += dt * beta * (tp.at(i,j,l) - t_ref);
 //                a[i][j] += dt * beta * (tp[i][j] - tpAvg[j - 1]);
 //                a[i][j] += dt * beta * (tp[i][j]);
             }
@@ -551,8 +539,7 @@ void applyTemperatureForce(double a[longs + 2][lats + 2][layers + 2], double tp[
     setBnd(a, flowType);
 }
 
-void applyCoriolisForce(double a0[longs + 2][lats + 2][layers + 2], double a1[longs + 2][lats + 2][layers + 2],
-                        double vx[longs + 2][lats + 2][layers + 2], double vy[longs + 2][lats + 2][layers + 2],
+void applyCoriolisForce(GridArray<double> a0, GridArray<double> &a1, GridArray<double> vx, GridArray<double> vy,
                         double omega, FlowType flowType) {
     // Apply the coriolis force and update array *a*.
     // F = (fv, -fu, ~0) where f = 2*omega*sin(lat)
@@ -562,7 +549,7 @@ void applyCoriolisForce(double a0[longs + 2][lats + 2][layers + 2], double a1[lo
         double f = 2 * omega * cos((j - .5) * M_PI / lats);
         for (int i = 1; i <= longs; i++) {
             for (int l = 1; l <= layers; l++) {
-                a1[i][j][l] = a0[i][j][l] + dt * f * ((flowType == zonal) ? vy[i][j][l] : -vx[i][j][l]);
+                a1.at(i,j,l) = a0.at(i,j,l) + dt * f * ((flowType == zonal) ? vy.at(i,j,l) : -vx.at(i,j,l));
             }
         }
     }
@@ -586,28 +573,28 @@ void step() {
     // Vel_step
 //    addSource(vxSrc, cur_vx); addSource(vySrc, cur_vy);
 
-    applyTemperatureForce(cur_vz, cur_tp, buoyancy, vertical);
-    applyCoriolisForce(cur_vx, next_vx, cur_vx, cur_vy, planetary_rotation, zonal);
-    applyCoriolisForce(cur_vy, next_vy, cur_vx, cur_vy, planetary_rotation, meridional);
+    applyTemperatureForce(*cur_vz, *cur_tp, buoyancy, vertical);
+    applyCoriolisForce(*cur_vx, *next_vx, *cur_vx, *cur_vy, planetary_rotation, zonal);
+    applyCoriolisForce(*cur_vy, *next_vy, *cur_vx, *cur_vy, planetary_rotation, meridional);
     swap(cur_vx, next_vx); swap(cur_vy, next_vy);
 
-    diffuse(cur_vx, next_vx, nv, zonal);
-    diffuse(cur_vy, next_vy, nv, meridional);
-    diffuse(cur_vz, next_vz, nv, vertical);
+    diffuse(*cur_vx, *next_vx, nv, zonal);
+    diffuse(*cur_vy, *next_vy, nv, meridional);
+    diffuse(*cur_vz, *next_vz, nv, vertical);
     swap(cur_vx, next_vx); swap(cur_vy, next_vy); swap(cur_vz, next_vz);
 
-    project(cur_vx, cur_vy, cur_vz); // Project to improve result of advect
-    advect(cur_vx, next_vx, cur_vx, cur_vy, cur_vz, zonal);
-    advect(cur_vy, next_vy, cur_vx, cur_vy, cur_vz, meridional);
-    advect(cur_vz, next_vz, cur_vx, cur_vy, cur_vz, vertical);
-    project(next_vx, next_vy, next_vz);
+    project(*cur_vx, *cur_vy, *cur_vz); // Project to improve result of advect
+    advect(*cur_vx, *next_vx, *cur_vx, *cur_vy, *cur_vz, zonal);
+    advect(*cur_vy, *next_vy, *cur_vx, *cur_vy, *cur_vz, meridional);
+    advect(*cur_vz, *next_vz, *cur_vx, *cur_vy, *cur_vz, vertical);
+    project(*next_vx, *next_vy, *next_vz);
     swap(cur_vx, next_vx); swap(cur_vy, next_vy); swap(cur_vz, next_vz);
 
     // Temp_step
-    addSource(tpSrc, cur_tp);
-    diffuse(cur_tp, next_tp, kappa, temperature);
+    addSource(tpSrc, *cur_tp);
+    diffuse(*cur_tp, *next_tp, kappa, temperature);
     swap(cur_tp, next_tp);
-    advect(cur_tp, next_tp, cur_vx, cur_vy, cur_vz, temperature);
+    advect(*cur_tp, *next_tp, *cur_vx, *cur_vy, *cur_vz, temperature);
 //    advect(cur_tp, next_tp, next_vx, next_vy, other);
     swap(cur_tp, next_tp);
 
@@ -625,22 +612,22 @@ void updateGrid() {
     for (size_t l = 0; l <= layers; ++l)
         for (size_t i = 0; i <= longs; ++i)
             for (size_t j = 0; j <= lats; ++j) {
-                double v00 = .5*(cur_tp[i][j][l] + cur_tp[i][j][l + 1]);
-                double v01 = .5*(cur_tp[i][j + 1][l] + cur_tp[i][j + 1][l + 1]);
-                double v10 = .5*(cur_tp[i + 1][j][l] + cur_tp[i + 1][j][l + 1]);
-                double v11 = .5*(cur_tp[i + 1][j + 1][l] + cur_tp[i + 1][j + 1][l + 1]);
+                double v00 = .5*(cur_tp->at(i,j,l) + cur_tp->at(i, j, l + 1));
+                double v01 = .5*(cur_tp->at(i, j + 1, l) + cur_tp->at(i, j + 1, l + 1));
+                double v10 = .5*(cur_tp->at(i + 1, j, l) + cur_tp->at(i + 1, j, l + 1));
+                double v11 = .5*(cur_tp->at(i + 1, j + 1, l) + cur_tp->at(i + 1, j + 1, l + 1));
                 // Weird interpolation because the quad is rendered as 2 triangles?
                 // Maybe this can help: https://jcgt.org/published/0011/03/04/paper.pdf
                 double t = bilinearInterpolate(0.5, 0.5, v00, v01, v10, v11);
-                gridVertices[i][j][l].r = 0;
-                gridVertices[i][j][l].g = 0;
-                gridVertices[i][j][l].b = 0;
+                gridVertices.at(i, j, l).r = 0;
+                gridVertices.at(i, j, l).g = 0;
+                gridVertices.at(i, j, l).b = 0;
                 if (t > 0) {
-                    gridVertices[i][j][l].r = (GLfloat)std::min(1.0, t);
+                    gridVertices.at(i, j, l).r = (GLfloat)std::min(1.0, t);
                 } else if (t < 0) {
-                    gridVertices[i][j][l].b = (GLfloat)std::min(1.0, -t);
+                    gridVertices.at(i, j, l).b = (GLfloat)std::min(1.0, -t);
                 }
-                gridVertices[i][j][l].a = (abs(t) < .1f) ? 0 : abs(t);
+                gridVertices.at(i, j, l).a = (abs(t) < .1f) ? 0 : abs(t);
 
             }
 
@@ -648,9 +635,9 @@ void updateGrid() {
         for (size_t i = 0; i < longs; ++i)
             for (size_t j = 0; j < lats; ++j) {
                 // TODO deal with flip of coordinates
-                velVertices[i][j][l][1].x = velVertices[i][j][l][0].x + cur_vx[i + 1][j + 1][l + 1] * velScale;
-                velVertices[i][j][l][1].y = velVertices[i][j][l][0].y + cur_vy[i + 1][j + 1][l + 1] * velScale;
-                velVertices[i][j][l][1].z = velVertices[i][j][l][0].z + cur_vz[i + 1][j + 1][l + 1] * velScale;
+                velVertices.at(i, j, l)[1].x = velVertices.at(i, j, l)[0].x + cur_vx->at(i + 1, j + 1, l + 1) * velScale;
+                velVertices.at(i, j, l)[1].y = velVertices.at(i, j, l)[0].y + cur_vy->at(i + 1, j + 1, l + 1) * velScale;
+                velVertices.at(i, j, l)[1].z = velVertices.at(i, j, l)[0].z + cur_vz->at(i + 1, j + 1, l + 1) * velScale;
 
 //                if (abs(cur_vx[i + 1][j + 1][l + 1]) < EPSILON
 //                    && abs(cur_vy[i + 1][j + 1][l + 1]) < EPSILON
