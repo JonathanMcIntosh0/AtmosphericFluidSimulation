@@ -41,7 +41,7 @@ int tpIdx_long = 0, tpIdx_lat = 0, tpIdx_layer = 0;
 
 //float velFactor = 1000.f;
 //float srcTemp = 50.f;
-float pointedTemp = std::numeric_limits<double>::quiet_NaN();
+//float pointedTemp = std::numeric_limits<double>::quiet_NaN();
 
 // camera controls
 /* arc ball */
@@ -91,21 +91,21 @@ void keyboardCB(GLFWwindow* window, int key, int scancode, int action, int mods)
                                 glm::rotate(glm::mat4(1.0f), (float) -(.5f * M_PI), glm::vec3(1, 0, 0)) :
                                 glm::rotate(glm::mat4(1.f), (float) (.5f * M_PI), glm::vec3(1, 0, 0)) * arcBall.R;
                 break;
-            case GLFW_KEY_LEFT: //TODO
+            case GLFW_KEY_LEFT:
                 if (buttonState == 0) {
                     if (mods == GLFW_MOD_SHIFT)
                         arcBall.R = glm::rotate(glm::mat4(1.0f), (float) -(.5f * M_PI), glm::vec3(1, 0, 0));
                     arcBall.R = glm::rotate(glm::mat4(1.f), (float) (.5f * M_PI), glm::vec3(0, 1, 0)) * arcBall.R;
                 }
                 break;
-            case GLFW_KEY_RIGHT: //TODO
+            case GLFW_KEY_RIGHT:
                 if (buttonState == 0) {
                     if (mods == GLFW_MOD_SHIFT)
                         arcBall.R = glm::rotate(glm::mat4(1.f), (float) -(.5f * M_PI), glm::vec3(1, 0, 0));
                     arcBall.R = glm::rotate(glm::mat4(1.f), (float) -(.5f * M_PI), glm::vec3(0, 1, 0)) * arcBall.R;
                 }
                 break;
-            case GLFW_KEY_DOWN: //TODO make top down view
+            case GLFW_KEY_DOWN:
                 if (buttonState == 0)
                     arcBall.R = (mods == GLFW_MOD_SHIFT) ?
                                 glm::rotate(glm::mat4(1.f), (float) M_PI, glm::vec3(1, 0, 0)) :
@@ -171,7 +171,8 @@ void mouseButtonCB(GLFWwindow* window, int button, int action, int mods)
             glfwGetCursorPos(window, &x, &y);
             arcBall.startRotation(x, y, windowWidth, windowHeight);
             buttonState = 1;
-		} else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+		}
+//        else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
 //			if (action == GLFW_PRESS) {
 //				double x, y;
 //				glfwGetCursorPos(window, &x, &y);
@@ -180,7 +181,7 @@ void mouseButtonCB(GLFWwindow* window, int button, int action, int mods)
 //				if (0 < x && x < frameWidth && 0 < y && y < frameHeight)
 //					addFilament(x, y);
 //			}
-		}
+//		}
 	}
 }
 
@@ -272,25 +273,6 @@ int main(void) {
         }
     }
 	Buffer frameBuffer(attrSizes, (GLfloat*)frameVertices, sizeof(frameVertices));
-//	const float dotRad = 2.5f;
-//	GLfloat rd[] = {
-//		-dotRad, -dotRad, 1, 0, 0, 1,
-//		 dotRad, -dotRad, 1, 0, 0, 1,
-//		 dotRad,  dotRad, 1, 0, 0, 1,
-//		-dotRad, -dotRad, 1, 0, 0, 1,
-//		 dotRad,  dotRad, 1, 0, 0, 1,
-//		-dotRad,  dotRad, 1, 0, 0, 1
-//	};
-//	Buffer redDotBuffer(attrSizes, rd, sizeof(rd));
-//	GLfloat bd[] = {
-//		-dotRad, -dotRad, 0, 0, 1, 1,
-//		 dotRad, -dotRad, 0, 0, 1, 1,
-//		 dotRad,  dotRad, 0, 0, 1, 1,
-//		-dotRad, -dotRad, 0, 0, 1, 1,
-//		 dotRad,  dotRad, 0, 0, 1, 1,
-//		-dotRad,  dotRad, 0, 0, 1, 1
-//	};
-//	Buffer blueDotBuffer(attrSizes, bd, sizeof(bd));
 
 	auto t_now = steady_clock::now();
 	while (!glfwWindowShouldClose(window)) {
@@ -302,21 +284,22 @@ int main(void) {
 
 		ImGui::Begin("Sim Setting");
 		ImGui::Text("Shortcut:\n\tspace - run/stop\n\ts     - step\n\tr     - restart\n\tv     - record\n\tESC   - exit");
-		ImGui::Text("\tright button     - add/delete heat source\n\tmiddle button    - add filament\n\tleft button drag - add force\n\tscrolling        - temperature control");
+		ImGui::Text("\tright button drag\t- rotate around\n\tscroll\t- zoom\n\tarrow keys\t- 90 degree rotate\n\tshift + arrow keys\t- preset rotations");
 		ImGui::Text("simTime: %6.2f", simTime);
-		ImGui::Text("srcTemp: %6.2f", pointedTemp);
+//		ImGui::Text("srcTemp: %6.2f", pointedTemp);
 		ImGui::Text("avgTemp: %6.2f", (float)getReferenceTemperature(*cur_tp));
 		ImGui::SliderInt("speed", &speed, 1, 10);
 		ImGui::Checkbox("recordFrames", &recordFrames);
+		ImGui::Checkbox("useCoriolisForce", &useCoriolis);
 		ImGui::SliderFloat("dt", &dt, 0.0001f, 0.1f);
 		ImGui::SliderFloat("dx", &dx, 0.01f, 5.0f);
 		ImGui::SliderFloat("nv", &nv, 0.f, 20.f);
 		ImGui::SliderFloat("kappa", &kappa, 0.f, 5.f);
 		ImGui::SliderFloat("buoyancy", &buoyancy, 0.f, 5.f);
-//		ImGui::SliderFloat("srcTemp", &srcTemp, -500.f, 500.f);
-//		ImGui::SliderFloat("velFactor", &velFactor, 10.f, 5000.f);
-//		ImGui::SliderFloat("maxAge", &maxAge, 1.0f, 50.0f);
-//		ImGui::SliderFloat("refinementThreshold", &refinementThreshold, 1.0f, 50.0f);
+		ImGui::SliderFloat("topTemp", &top_temp, -10.f, 10.f);
+		ImGui::SliderFloat("botTemp", &bot_temp, -10.f, 10.f);
+		ImGui::SliderFloat("planetaryRotation", &planetary_rotation, 0.f, 10.f);
+		ImGui::SliderFloat("externalHeatFactor", &external_heat_factor, 0.f, 1.0f);
 		ImGui::SliderInt("iterations", &iterations, 1, 100);
 		ImGui::End();
 
@@ -412,27 +395,8 @@ int main(void) {
             }
         }
 
-//		if (showFilament) {
-//			for (shared_ptr<vector<Vertex>> &filament: filaments) {
-//				Buffer buffer(attrSizes, (GLfloat*)filament->data(), filament->size() * sizeof(Vertex));
-//				buffer.draw(GL_LINE_STRIP);
-//			}
-//		}
-
 		if (showGrid)
 			frameBuffer.draw(GL_LINES);
-
-//		for (size_t i = 1; i <= rows; ++i)
-//			for (size_t j = 1; j <= cols; ++j)
-//				if (tpSrc[i][j] > 0) {
-//					mat4 m = glm::translate(vec3(-frameWidth/2 + (j-0.5) * cellSize, -frameHeight/2 + (i-0.5) * cellSize, 0.f));
-//					shader.set_mat4("MVP", pv * m);
-//					redDotBuffer.draw(GL_TRIANGLES);
-//				} else if (tpSrc[i][j] < 0) {
-//					mat4 m = glm::translate(vec3(-frameWidth/2 + (j-0.5) * cellSize, -frameHeight/2 + (i-0.5) * cellSize, 0.f));
-//					shader.set_mat4("MVP", pv * m);
-//					blueDotBuffer.draw(GL_TRIANGLES);
-//				}
 
 		if (recordFrame)
 		{

@@ -30,6 +30,9 @@ extern float simTime;
 extern float dx;
 //extern float refinementThreshold;
 extern int iterations;
+extern float bot_temp, top_temp, planetary_rotation, external_heat_factor;
+
+extern bool useCoriolis;
 
 //extern double tpAvg[lats];
 extern GridArray<double> tpSrc;
