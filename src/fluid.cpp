@@ -309,7 +309,7 @@ int main(void) {
         ImGui::Checkbox("showVel", &showVel);
         ImGui::Checkbox("showTemp", &showTemp);
         if (ImGui::TreeNode("Velocity")){
-            ImGui::SliderFloat("velScale", &velScale, 1.f, 1000.f);
+            ImGui::SliderFloat("velScale", &velScale, 1.f, 200.f);
             ImGui::Checkbox("All", &velMode_all);
             if (velMode_all) ImGui::BeginDisabled();
             ImGui::Checkbox("Longitude", &velMode_long);

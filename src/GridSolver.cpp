@@ -16,20 +16,20 @@ using std::shared_ptr;
 using std::make_shared;
 
 float nv = 1.0f, kappa = 0.1f; // diffuse rate. nv is for velocity field and kapp is for heat transfer.
-float dt = 0.01f; // simulation step size
+float dt = 0.05f; // simulation step size
 float simTime;
 float dx = 1; // size of a cell in simulation
 //float dz = 1; // distance between vertical layers in simulation
 float velScale = 10.0f; // scaling for display
-float buoyancy = 0.5f; // buoyancy force coefficient
+float buoyancy = 1.0f; // buoyancy force coefficient
 float planetary_rotation = .5f; // Speed of planetary rotation (Omega)
 // Rotation = 2 for videos (1 for external heat vids, then 2 for last one)
-float external_heat_factor = 0.5f; // Factor to multiply tpSrc (J) by before adding it (MUST RESET SIMULATION AFTER CHANGING)
+float external_heat_factor = 0.3f; // Factor to multiply tpSrc (J) by before adding it (MUST RESET SIMULATION AFTER CHANGING)
 // .1, .5, 1.
-int iterations = 20; // number of iterations for iterative solvers (Gauss–Seidel, Conjugate Gradients, etc.)
+int iterations = 25; // number of iterations for iterative solvers (Gauss–Seidel, Conjugate Gradients, etc.)
 
-float bot_temp = 1; // temperature at bottom boundary
-float top_temp = -1; // temp at top boundary
+float bot_temp = .4; // temperature at bottom boundary
+float top_temp = -.4; // temp at top boundary
 
 bool useCoriolis = true; // whether coriolis force is applied.
 
@@ -335,13 +335,14 @@ void diffuse(GridArray<double> a0, GridArray<double> &a1, double nv, FlowType fl
 	// Use a Gauss Seidel solve (or better, Conjugate Gradients).
 	// Use *iterations* as the number of iterations.
 	// Call setBnd to fix the boundary.
-    bool hasConverged;
-    double max_diff;
+
+//    bool hasConverged;
+//    double max_diff;
 
     double a = dt * nv / (dx * dx);
     for (int k = 0; k < iterations; k++) {
-        hasConverged = true;
-        max_diff = 0;
+//        hasConverged = true;
+//        max_diff = 0;
         for (int i = 1; i <= longs; i++) {
             for (int j = 1; j <= lats; j++) {
                 for (int l = 1; l <= layers; l++) {
@@ -349,20 +350,20 @@ void diffuse(GridArray<double> a0, GridArray<double> &a1, double nv, FlowType fl
                                 a * (a1.at(i-1,j,l) + a1.at(i+1,j,l)
                                      + a1.at(i,j-1,l) + a1.at(i,j+1,l)
                                      + a1.at(i,j,l-1) + a1.at(i,j,l+1))) / (1 + 6*a);
-                    double diff = abs(b - a1.at(i,j,l));
-                    if (diff > EPSILON) {
-                        hasConverged = false;
-                        max_diff = fmax(max_diff, diff);
-                    }
+//                    double diff = abs(b - a1.at(i,j,l));
+//                    if (diff > EPSILON) {
+//                        hasConverged = false;
+//                        max_diff = fmax(max_diff, diff);
+//                    }
 
                     a1.at(i,j,l) = b;
                 }
             }
         }
         setBnd(a1, flowType);
-        if (hasConverged) break;
+//        if (hasConverged) break;
     }
-    if (!hasConverged) std::cout << "DIFFUSE: NO CONVERGENCE: DIFF = " << max_diff << std::endl;
+//    if (!hasConverged) std::cout << "DIFFUSE: NO CONVERGENCE: DIFF = " << max_diff << std::endl;
 
 
 }
@@ -479,7 +480,7 @@ void project(GridArray<double> &vx, GridArray<double> &vy, GridArray<double> &vz
             }
         }
         setBnd(s_p, other);
-        if (hasConverged) break;
+//        if (hasConverged) break;
     }
     if (!hasConverged) std::cout << "PROJECT: NO CONVERGENCE: DIFF = " << max_diff << std::endl;
 
