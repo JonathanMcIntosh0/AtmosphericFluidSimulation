@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
-project("COMP559FinalProj")
+project("AtmosphericFluidSimulation")
+
+# If option 2 of ReadMe uncomment following line
+#SET(ENV{THIRDPARTY_DIR} 3rdparty)
 
 SET(GLM_INCLUDE_DIR $ENV{THIRDPARTY_DIR}/glm-0.9.9)
 SET(IMGUI_ROOT_DIR $ENV{THIRDPARTY_DIR}/imgui-1.89.3)
